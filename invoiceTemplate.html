@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <title>Factuur <?= invoice.number ?></title>
+  <style>
+    @page {
+      size: A4;
+      margin: 2cm 1.5cm;
+    }
+    
+    body {
+      font-family: Arial, sans-serif;
+      font-size: 11pt;
+      line-height: 1.4;
+      color: #000;
+      margin: 0;
+      padding: 0;
+    }
+    
+    /* SIMPLE HEADER - EXACT TEMPLATE MATCH */
+    .company-name {
+      text-align: center;
+      font-size: 24pt;
+      font-weight: bold;
+      margin-bottom: 5pt;
+    }
+    
+    .agency-line {
+      text-align: center;
+      font-size: 20pt;
+      margin-bottom: 10pt;
+    }
+    
+    .invoice-title {
+      text-align: center;
+      font-size: 16pt;
+      font-weight: bold;
+      margin-bottom: 20pt;
+    }
+    
+    /* COMPANY INFO BLOCK */
+    .company-info {
+      font-size: 10pt;
+      line-height: 1.3;
+      margin-bottom: 20pt;
+    }
+    
+    /* INVOICE DETAILS - RIGHT ALIGNED */
+    .invoice-details {
+      text-align: right;
+      font-size: 11pt;
+      margin-bottom: 20pt;
+    }
+    
+    /* SECTION HEADERS */
+    .section-header {
+      font-weight: bold;
+      font-size: 12pt;
+      margin: 20pt 0 10pt 0;
+    }
+    
+    /* CLIENT ADDRESS */
+    .client-address {
+      font-size: 11pt;
+      margin-bottom: 20pt;
+    }
+    
+    /* PROJECT DETAILS */
+    .project-details {
+      font-size: 11pt;
+      margin-bottom: 20pt;
+    }
+    
+    /* SERVICES TABLE - SIMPLE */
+    .services-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20pt 0;
+      font-size: 10pt;
+    }
+    
+    .services-table th {
+      font-weight: bold;
+      padding: 8pt;
+      text-align: left;
+      border-bottom: 1pt solid #000;
+    }
+    
+    .services-table td {
+      padding: 8pt;
+      vertical-align: top;
+    }
+    
+    .services-table .amount {
+      text-align: right;
+    }
+    
+    /* TOTALS - SIMPLE RIGHT ALIGNED */
+    .totals-section {
+      text-align: right;
+      margin: 20pt 0;
+    }
+    
+    .subtotal {
+      font-size: 11pt;
+      margin-bottom: 5pt;
+    }
+    
+    .total-final {
+      font-size: 12pt;
+      font-weight: bold;
+      margin-top: 10pt;
+    }
+    
+    /* PAYMENT INFO */
+    .payment-section {
+      margin-top: 30pt;
+    }
+    
+    .payment-header {
+      font-weight: bold;
+      font-size: 12pt;
+      margin-bottom: 10pt;
+    }
+    
+    .payment-details {
+      font-size: 10pt;
+      line-height: 1.4;
+    }
+    
+    /* TERMS */
+    .terms-section {
+      margin-top: 30pt;
+    }
+    
+    .terms-header {
+      font-weight: bold;
+      font-size: 11pt;
+      margin-bottom: 10pt;
+    }
+    
+    .terms-content {
+      font-size: 9pt;
+      line-height: 1.3;
+    }
+    
+    /* FOOTER */
+    .footer {
+      margin-top: 30pt;
+      font-size: 8pt;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <!-- HEADER - EXACT TEMPLATE MATCH -->
+  <div class="company-name">MORE IS MORE!</div>
+  <div class="agency-line">Agency</div>
+  <div class="invoice-title">FACTUUR</div>
+  
+  <!-- COMPANY INFO BLOCK -->
+  <div class="company-info">
+    <?= company.address ?><br>
+    <?= company.postalCode ?> <?= company.city ?>, <?= company.country ?><br>
+    Tel: <?= company.phone ?><br>
+    E-mail: <?= company.email ?><br>
+    Ondernemingsnummer: <?= company.vatNumber.replace('BE ', '') ?>
+  </div>
+  
+  <!-- INVOICE DETAILS - RIGHT ALIGNED -->
+  <div class="invoice-details">
+    Factuurnr: <?= invoice.number ?><br>
+    Factuurdatum: <?= invoice.date ?><br>
+    Vervaldatum: <?= invoice.dueDate ?><br>
+    Referentie: <?= invoice.reference ?>
+  </div>
+  
+  <!-- FACTUURADRES -->
+  <div class="section-header">FACTUURADRES</div>
+  <div class="client-address">
+    <?= client.company ?><br>
+    <?= client.contact ?><br>
+    <?= client.address ?><br>
+    <?= client.postalCode ? client.postalCode + ' ' : '' ?><?= client.city ?><br>
+    <?= client.country ?><br>
+    BTW: <?= client.vatNumber || 'n.v.t.' ?>
+  </div>
+  
+  <!-- PROJECT DETAILS -->
+  <div class="section-header">PROJECT DETAILS</div>
+  <div class="project-details">
+    Project: <?= project.name ?><br>
+    Periode: <?= project.period ?><br>
+    Account manager: <?= project.accountManager ?>
+  </div>
+  
+  <!-- SERVICES TABLE -->
+  <div class="section-header">GELEVERDE DIENSTEN</div>
+  <table class="services-table">
+    <thead>
+      <tr>
+        <th>Omschrijving</th>
+        <th>Aantal</th>
+        <th>Eenheidsprijs</th>
+        <th>BTW</th>
+        <th>Bedrag</th>
+      </tr>
+    </thead>
+    <tbody>
+      <? for (var i = 0; i < services.length; i++) { ?>
+      <tr>
+        <td><?= services[i].description ?></td>
+        <td class="amount"><?= services[i].quantity ?></td>
+        <td class="amount">€<?= services[i].unitPrice.toFixed(2) ?></td>
+        <td class="amount"><?= services[i].vat ?></td>
+        <td class="amount">€<?= services[i].total.toFixed(2) ?></td>
+      </tr>
+      <? } ?>
+    </tbody>
+  </table>
+  
+  <!-- TOTALS - SIMPLE RIGHT ALIGNED -->
+  <div class="totals-section">
+    <div class="subtotal">Subtotaal €<?= totals.subtotal.toFixed(2) ?></div>
+    <? if (totals.discount && totals.discount != 0) { ?>
+    <div class="subtotal">Korting/toeslag (optioneel) <?= totals.discount.toFixed(2) ?></div>
+    <? } ?>
+    <div class="total-final">TOTAAL TE BETALEN €<?= totals.grandTotal.toFixed(2) ?></div>
+  </div>
+  
+  <!-- FOOTER LINE - TEMPLATE STYLE -->
+  <div style="text-align: center; font-size: 8pt; margin: 20pt 0;">
+    MORE IS MORE! Agency VZW | <?= company.address ?>, <?= company.postalCode ?> <?= company.city ?> | <?= company.vatNumber ?> | RPR Brussel
+  </div>
+  
+  <!-- PAYMENT INFO -->
+  <div class="payment-section">
+    <div class="payment-header">BETALINGSGEGEVENS</div>
+    <div class="payment-details">
+      Bank: Triodos Bank<br>
+      Rekeninghouder: <?= company.name ?><br>
+      IBAN: <?= company.iban ?><br>
+      BIC: <?= company.bic ?><br>
+      Mededeling: <?= invoice.number ?><br>
+      Vervaldatum: <?= invoice.dueDate ?>
+    </div>
+  </div>
+  
+  <!-- TERMS -->
+  <div class="terms-section">
+    <div class="terms-header">ALGEMENE VOORWAARDEN</div>
+    <div class="terms-content">
+      1. Deze factuur is betaalbaar binnen 30 dagen na factuurdatum.<br>
+      2. Bij niet-betaling op de vervaldag is van rechtswege en zonder ingebrekestelling een intrest verschuldigd van 10% per jaar.<br>
+      3. Bovendien is bij gehele of gedeeltelijke niet-betaling van de schuld op de vervaldag van rechtswege en zonder ingebrekestelling een forfaitaire vergoeding verschuldigd van 10% op het factuurbedrag, met een minimum van € 75,00.<br>
+      4. Alle geschillen vallen onder de exclusieve bevoegdheid van de rechtbanken van Brussel.
+    </div>
+  </div>
+  
+  <!-- FINAL FOOTER -->
+  <div class="footer">
+    MORE IS MORE! Agency VZW | <?= company.address ?>, <?= company.postalCode ?> <?= company.city ?> | <?= company.vatNumber ?> | RPR Brussel
+  </div>
+</body>
+</html>
