@@ -1,0 +1,1440 @@
+<script>
+// ==================== GLOBALE VARIABELEN ====================
+let currentData = {
+  transactions: [],
+  projects: [],
+  clients: [],
+  invoices: [],
+  expenses: [],
+  reportData: null
+};
+let searchTimeout;
+let selectedClientData = null;
+let selectedExpenseFile = null;
+
+// ==================== INITIALISATIE ====================
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('VZW Accounting System v4.0 - Initializing with ALL FIXES...');
+  
+  setupNavigation();
+  setupEventListeners();
+  setupClientAutocomplete();
+  setupFileUpload();
+  testConnection();
+  loadDashboard();
+  setDefaultDates();
+});
+
+// ==================== NAVIGATIE SYSTEEM ====================
+function setupNavigation() {
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', function() {
+      const section = this.getAttribute('data-section');
+      showSection(section);
+      
+      // Update active nav item
+      document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
+      this.classList.add('active');
+    });
+  });
+}
+
+function showSection(sectionName) {
+  // Hide all sections
+  document.querySelectorAll('.content-section').forEach(section => {
+    section.classList.remove('active');
+  });
+  
+  // Show target section
+  const targetSection = document.getElementById(sectionName);
+  if (targetSection) {
+    targetSection.classList.add('active');
+    
+    // Load section-specific data
+    switch(sectionName) {
+      case 'dashboard':
+        loadDashboard();
+        break;
+      case 'transactions':
+        loadTransactions();
+        loadProjectsForDropdowns();
+        loadNACECodes();
+        break;
+      case 'projects':
+        loadProjects();
+        break;
+      case 'invoices':
+        loadInvoices();
+        break;
+      case 'expenses':
+        loadExpenses();
+        loadProjectsForDropdowns();
+        break;
+      case 'reports':
+        loadProjectsForDropdowns();
+        break;
+    }
+  }
+}
+
+// ==================== EVENT LISTENERS ====================
+function setupEventListeners() {
+  // Transaction form
+  const transactionForm = document.getElementById('transactionForm');
+  if (transactionForm) {
+    transactionForm.addEventListener('submit', handleTransactionSubmit);
+  }
+  
+  // Project form
+  const projectForm = document.getElementById('projectForm');
+  if (projectForm) {
+    projectForm.addEventListener('submit', handleProjectSubmit);
+  }
+  
+  // Invoice form
+  const invoiceForm = document.getElementById('invoiceForm');
+  if (invoiceForm) {
+    invoiceForm.addEventListener('submit', handleInvoiceSubmit);
+  }
+  
+  // Expense form
+  const expenseForm = document.getElementById('expenseForm');
+  if (expenseForm) {
+    expenseForm.addEventListener('submit', handleExpenseSubmit);
+  }
+  
+  // VAT calculation listeners
+  const transactionAmount = document.getElementById('transactionAmount');
+  const transactionVAT = document.getElementById('transactionVAT');
+  if (transactionAmount && transactionVAT) {
+    transactionAmount.addEventListener('input', calculateTransactionTotal);
+    transactionVAT.addEventListener('change', calculateTransactionTotal);
+  }
+  
+  // Expense VAT calculation
+  const expenseAmount = document.getElementById('expenseAmount');
+  const expenseVAT = document.getElementById('expenseVAT');
+  if (expenseAmount && expenseVAT) {
+    expenseAmount.addEventListener('input', calculateExpenseTotal);
+    expenseVAT.addEventListener('change', calculateExpenseTotal);
+  }
+  
+  // Close modal when clicking outside
+  window.onclick = function(event) {
+    const modal = document.getElementById('invoiceModal');
+    if (event.target === modal) {
+      closeInvoiceModal();
+    }
+  }
+}
+
+// ==================== CONNECTION TESTING ====================
+function testConnection() {
+  updateConnectionStatus('testing', 'Verbinding testen...');
+  
+  google.script.run
+    .withSuccessHandler(handleConnectionSuccess)
+    .withFailureHandler(handleConnectionError)
+    .testConnection();
+}
+
+function handleConnectionSuccess(result) {
+  if (result.success) {
+    updateConnectionStatus('connected', 'Verbonden met Airtable');
+    showSuccess('Verbinding met Airtable succesvol getest!');
+  } else {
+    updateConnectionStatus('disconnected', 'Verbinding mislukt');
+    showError('Verbindingstest mislukt: ' + result.error);
+  }
+}
+
+function handleConnectionError(error) {
+  updateConnectionStatus('disconnected', 'Verbinding mislukt');
+  showError('Kan geen verbinding maken met Airtable: ' + error.message);
+}
+
+function updateConnectionStatus(status, message) {
+  const statusElement = document.getElementById('connectionStatus');
+  const indicator = statusElement.querySelector('.status-indicator');
+  const text = statusElement.querySelector('span');
+  
+  // Remove existing classes
+  indicator.classList.remove('status-connected', 'status-disconnected');
+  
+  // Add new class
+  if (status === 'connected') {
+    indicator.classList.add('status-connected');
+  } else {
+    indicator.classList.add('status-disconnected');
+  }
+  
+  text.textContent = message;
+}
+
+// ==================== BUG FIX 1: CLIENT AUTOCOMPLETE (GEFIXED) ====================
+function setupClientAutocomplete() {
+  const searchInput = document.getElementById('clientSearch');
+  const resultsDiv = document.getElementById('clientSearchResults');
+  
+  if (!searchInput || !resultsDiv) return;
+  
+  // Setup search input event listener
+  searchInput.addEventListener('input', function(e) {
+    const query = e.target.value.trim();
+    
+    // Clear previous timeout
+    if (searchTimeout) {
+      clearTimeout(searchTimeout);
+    }
+    
+    // Hide results if query too short
+    if (query.length < 2) {
+      hideSearchResults();
+      return;
+    }
+    
+    // Debounce search
+    searchTimeout = setTimeout(() => {
+      performClientSearch(query);
+    }, 300);
+  });
+  
+  // Hide results when clicking outside
+  document.addEventListener('click', function(e) {
+    if (!searchInput.contains(e.target) && !resultsDiv.contains(e.target)) {
+      hideSearchResults();
+    }
+  });
+  
+  // Show results when clicking on search input
+  searchInput.addEventListener('focus', function() {
+    if (searchInput.value.trim().length >= 2) {
+      performClientSearch(searchInput.value.trim());
+    }
+  });
+}
+
+function performClientSearch(query) {
+  const resultsDiv = document.getElementById('clientSearchResults');
+  
+  // Show loading
+  resultsDiv.innerHTML = '<div class="loading-search">🔍 Zoeken...</div>';
+  resultsDiv.style.display = 'block';
+  
+  // Search clients via Google Apps Script
+  google.script.run
+    .withSuccessHandler(handleSearchResults)
+    .withFailureHandler(handleSearchError)
+    .searchClients(query);
+}
+
+function handleSearchResults(result) {
+  const resultsDiv = document.getElementById('clientSearchResults');
+  
+  if (!result.success) {
+    resultsDiv.innerHTML = '<div class="loading-search">❌ Zoekfout: ' + result.error + '</div>';
+    return;
+  }
+  
+  if (result.clients.length === 0) {
+    resultsDiv.innerHTML = '<div class="loading-search">🚫 Geen klanten gevonden</div>';
+    return;
+  }
+  
+  // Build results HTML
+  let html = '';
+  result.clients.forEach(client => {
+    html += `
+      <div class="search-result-item" onclick="selectClient('${client.id}', ${JSON.stringify(client).replace(/"/g, '&quot;')})">
+        <div class="search-result-company">${client.company || 'Geen bedrijfsnaam'}</div>
+        <div class="search-result-contact">👤 ${client.contact || 'Geen contact'}</div>
+        ${client.email ? `<div class="search-result-email">📧 ${client.email}</div>` : ''}
+        ${client.city ? `<div class="search-result-email">🏙️ ${client.city}</div>` : ''}
+      </div>
+    `;
+  });
+  
+  resultsDiv.innerHTML = html;
+}
+
+function handleSearchError(error) {
+  const resultsDiv = document.getElementById('clientSearchResults');
+  resultsDiv.innerHTML = '<div class="loading-search">❌ Fout bij zoeken: ' + error.message + '</div>';
+  console.error('Client search error:', error);
+}
+
+function selectClient(clientId, clientData) {
+  // Store selected client data
+  selectedClientData = clientData;
+  
+  // Fill form fields
+  document.getElementById('clientCompany').value = clientData.company || '';
+  document.getElementById('contactPerson').value = clientData.contact || '';
+  document.getElementById('clientAddress').value = clientData.address || '';
+  document.getElementById('clientPostalCode').value = clientData.postalCode || '';
+  document.getElementById('clientCity').value = clientData.city || '';
+  document.getElementById('clientVatNumber').value = clientData.vatNumber || '';
+  document.getElementById('clientEmail').value = clientData.email || '';
+  document.getElementById('clientPhone').value = clientData.phone || '';
+  
+  // Update search input to show selected client
+  document.getElementById('clientSearch').value = clientData.company || clientData.contact || '';
+  
+  // Hide search results
+  hideSearchResults();
+  
+  // Show success message
+  showSuccess('✅ Klant geselecteerd: ' + (clientData.company || clientData.contact));
+}
+
+function hideSearchResults() {
+  const resultsDiv = document.getElementById('clientSearchResults');
+  if (resultsDiv) {
+    resultsDiv.style.display = 'none';
+  }
+}
+
+function clearClientForm() {
+  // Clear all client fields
+  const clientFields = [
+    'clientSearch', 'clientCompany', 'contactPerson', 'clientAddress',
+    'clientPostalCode', 'clientCity', 'clientVatNumber', 'clientEmail', 'clientPhone'
+  ];
+  
+  clientFields.forEach(fieldId => {
+    const field = document.getElementById(fieldId);
+    if (field) field.value = '';
+  });
+  
+  selectedClientData = null;
+  hideSearchResults();
+  
+  showInfo('🗑️ Klantgegevens gewist');
+}
+
+function saveNewClientFromInvoice() {
+  const clientData = {
+    Klantgegevens: document.getElementById('clientCompany').value,
+    Contactpersoon: document.getElementById('contactPerson').value,
+    Adres: document.getElementById('clientAddress').value,
+    Postcode: document.getElementById('clientPostalCode').value,
+    Stad: document.getElementById('clientCity').value,
+    Land: 'België',
+    'BTW-nummer': document.getElementById('clientVatNumber').value,
+    Email: document.getElementById('clientEmail').value,
+    Telefoon: document.getElementById('clientPhone').value
+  };
+  
+  // Basic validation
+  if (!clientData.Klantgegevens || !clientData.Contactpersoon) {
+    showError('❌ Bedrijfsnaam en contactpersoon zijn verplicht');
+    return;
+  }
+  
+  showInfo('💾 Nieuwe klant opslaan...');
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        showSuccess('✅ Nieuwe klant opgeslagen!');
+        selectedClientData = {
+          id: result.record.id,
+          company: clientData.Klantgegevens,
+          contact: clientData.Contactpersoon,
+          address: clientData.Adres,
+          postalCode: clientData.Postcode,
+          city: clientData.Stad,
+          country: 'België',
+          vatNumber: clientData['BTW-nummer'],
+          email: clientData.Email,
+          phone: clientData.Telefoon
+        };
+      } else {
+        showError('❌ Klant opslaan mislukt: ' + result.error);
+      }
+    })
+    .withFailureHandler(handleError)
+    .createClient(clientData);
+}
+
+// ==================== BUG FIX 3: FILE UPLOAD SYSTEM (GEFIXED) ====================
+function setupFileUpload() {
+  const fileInput = document.getElementById('expenseFile');
+  const dropZone = document.getElementById('fileDropZone');
+  
+  if (!fileInput || !dropZone) return;
+  
+  // File input change event
+  fileInput.addEventListener('change', handleFileSelect);
+  
+  // Drag and drop events
+  dropZone.addEventListener('dragover', handleDragOver);
+  dropZone.addEventListener('dragleave', handleDragLeave);
+  dropZone.addEventListener('drop', handleFileDrop);
+  
+  // Prevent default drag behaviors on document
+  document.addEventListener('dragover', e => e.preventDefault());
+  document.addEventListener('drop', e => e.preventDefault());
+}
+
+function handleDragOver(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  document.getElementById('fileDropZone').classList.add('drag-over');
+}
+
+function handleDragLeave(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  document.getElementById('fileDropZone').classList.remove('drag-over');
+}
+
+function handleFileDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  document.getElementById('fileDropZone').classList.remove('drag-over');
+  
+  const files = e.dataTransfer.files;
+  if (files.length > 0) {
+    processFile(files[0]);
+  }
+}
+
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (file) {
+    processFile(file);
+  }
+}
+
+function processFile(file) {
+  // Validation
+  const maxSize = 50 * 1024 * 1024; // 50MB
+  if (file.size > maxSize) {
+    showError('❌ Bestand is te groot. Maximaal 50MB toegestaan.');
+    return;
+  }
+  
+  const allowedTypes = [
+    'application/pdf',
+    'image/jpeg', 'image/jpg', 'image/png', 'image/gif',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'text/plain', 'text/csv'
+  ];
+  
+  if (!allowedTypes.includes(file.type)) {
+    showError('❌ Bestandstype niet toegestaan. Gebruik PDF, afbeeldingen, Word of Excel bestanden.');
+    return;
+  }
+  
+  // Store file
+  selectedExpenseFile = file;
+  
+  // Show preview
+  showFilePreview(file);
+}
+
+function showFilePreview(file) {
+  const dropZone = document.getElementById('fileDropZone');
+  const preview = document.getElementById('filePreview');
+  const fileName = document.getElementById('fileName');
+  const fileSize = document.getElementById('fileSize');
+  
+  // Hide drop zone, show preview
+  document.getElementById('uploadText').style.display = 'none';
+  preview.style.display = 'block';
+  
+  // Update preview info
+  fileName.textContent = file.name;
+  fileSize.textContent = formatFileSize(file.size);
+  
+  showSuccess('✅ Bestand geselecteerd: ' + file.name);
+}
+
+function removeFile() {
+  selectedExpenseFile = null;
+  
+  // Reset file input
+  document.getElementById('expenseFile').value = '';
+  
+  // Hide preview, show drop zone
+  document.getElementById('filePreview').style.display = 'none';
+  document.getElementById('uploadText').style.display = 'block';
+  
+  showInfo('🗑️ Bestand verwijderd');
+}
+
+function formatFileSize(bytes) {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// ==================== DASHBOARD ====================
+function loadDashboard() {
+  showInfo('📊 Dashboard laden...');
+  
+  google.script.run
+    .withSuccessHandler(updateDashboard)
+    .withFailureHandler(handleError)
+    .loadDashboardData();
+}
+
+function updateDashboard(result) {
+  if (result.success) {
+    const data = result.data;
+    
+    // Update statistics
+    document.getElementById('totalIncome').textContent = formatCurrency(data.totalIncome);
+    document.getElementById('totalExpenses').textContent = formatCurrency(data.totalExpenses);
+    document.getElementById('netResult').textContent = formatCurrency(data.netResult);
+    document.getElementById('totalVAT').textContent = formatCurrency(data.totalVAT);
+    
+    // Update recent transactions table
+    updateRecentTransactionsTable(data.transactions);
+    
+    showSuccess('✅ Dashboard bijgewerkt!');
+  } else {
+    showError('❌ Dashboard laden mislukt: ' + result.error);
+  }
+}
+
+function updateRecentTransactionsTable(transactions) {
+  const tbody = document.getElementById('recentTransactionsBody');
+  tbody.innerHTML = '';
+  
+  if (transactions.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center">Geen transacties gevonden</td></tr>';
+    return;
+  }
+  
+  transactions.forEach(transaction => {
+    const fields = transaction.fields;
+    const row = document.createElement('tr');
+    
+    row.innerHTML = `
+      <td>${formatDate(fields.Date)}</td>
+      <td><span class="status-badge ${fields.Select === 'Inkomsten' ? 'status-paid' : 'status-pending'}">${fields.Select}</span></td>
+      <td>${fields.Beschrijving || '-'}</td>
+      <td>${fields.Project || 'Algemeen'}</td>
+      <td class="text-right ${fields.Select === 'Inkomsten' ? 'text-success' : 'text-error'} font-bold">${formatCurrency(fields.Bedrag)}</td>
+    `;
+    
+    tbody.appendChild(row);
+  });
+}
+
+// ==================== TRANSACTIONS ====================
+function handleTransactionSubmit(e) {
+  e.preventDefault();
+  
+  const transactionData = {
+    Date: document.getElementById('transactionDate').value,
+    Select: document.getElementById('transactionType').value,
+    Beschrijving: document.getElementById('transactionDescription').value,
+    Project: document.getElementById('transactionProject').value,
+    'NACE Code': document.getElementById('transactionNACE').value,
+    Bedrag: parseFloat(document.getElementById('transactionAmount').value),
+    'BTW Percentage': parseFloat(document.getElementById('transactionVAT').value)
+  };
+  
+  showInfo('💾 Transactie opslaan...');
+  
+  google.script.run
+    .withSuccessHandler(handleTransactionSuccess)
+    .withFailureHandler(handleError)
+    .createTransaction(transactionData);
+}
+
+function handleTransactionSuccess(result) {
+  if (result.success) {
+    showSuccess('✅ Transactie succesvol opgeslagen!');
+    resetTransactionForm();
+    loadTransactions();
+    loadDashboard();
+  } else {
+    showError('❌ Transactie opslaan mislukt: ' + result.error);
+  }
+}
+
+function loadTransactions() {
+  google.script.run
+    .withSuccessHandler(updateTransactionsTable)
+    .withFailureHandler(handleError)
+    .getAllTransactions();
+}
+
+function updateTransactionsTable(result) {
+  const tbody = document.getElementById('transactionsBody');
+  tbody.innerHTML = '';
+  
+  if (!result.success || result.records.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center">Geen transacties gevonden</td></tr>';
+    return;
+  }
+  
+  result.records.forEach(transaction => {
+    const fields = transaction.fields;
+    const row = document.createElement('tr');
+    
+    row.innerHTML = `
+      <td>${formatDate(fields.Date)}</td>
+      <td><span class="status-badge ${fields.Select === 'Inkomsten' ? 'status-paid' : 'status-pending'}">${fields.Select}</span></td>
+      <td>${fields.Beschrijving || '-'}</td>
+      <td>${fields.Project || 'Algemeen'}</td>
+      <td class="text-right ${fields.Select === 'Inkomsten' ? 'text-success' : 'text-error'} font-bold">${formatCurrency(fields.Bedrag)}</td>
+      <td class="text-right">${formatCurrency(fields['BTW Bedrag'] || 0)}</td>
+      <td class="text-right font-bold">${formatCurrency(fields.Totaal)}</td>
+      <td>
+        <button class="btn btn-danger btn-small" onclick="deleteTransaction('${transaction.id}')">
+          🗑️
+        </button>
+      </td>
+    `;
+    
+    tbody.appendChild(row);
+  });
+}
+
+function calculateTransactionTotal() {
+  const amount = parseFloat(document.getElementById('transactionAmount').value) || 0;
+  const vatRate = parseFloat(document.getElementById('transactionVAT').value) || 0;
+  const vatAmount = amount * (vatRate / 100);
+  const total = amount + vatAmount;
+  
+  document.getElementById('transactionTotal').value = total.toFixed(2);
+}
+
+function resetTransactionForm() {
+  document.getElementById('transactionForm').reset();
+  setDefaultDates();
+  calculateTransactionTotal();
+}
+
+function deleteTransaction(recordId) {
+  if (!confirm('🗑️ Weet je zeker dat je deze transactie wilt verwijderen?')) {
+    return;
+  }
+  
+  showInfo('🗑️ Transactie verwijderen...');
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        showSuccess('✅ Transactie succesvol verwijderd!');
+        loadTransactions();
+        loadDashboard();
+      } else {
+        showError('❌ Transactie verwijderen mislukt: ' + result.error);
+      }
+    })
+    .withFailureHandler(handleError)
+    .deleteTransaction(recordId);
+}
+
+// ==================== PROJECTS ====================
+function handleProjectSubmit(e) {
+  e.preventDefault();
+  
+  const projectData = {
+    Naam: document.getElementById('projectName').value,
+    Type: document.getElementById('projectType').value,
+    Beschrijving: document.getElementById('projectDescription').value
+  };
+  
+  showInfo('💾 Project aanmaken...');
+  
+  google.script.run
+    .withSuccessHandler(handleProjectSuccess)
+    .withFailureHandler(handleError)
+    .createProject(projectData);
+}
+
+function handleProjectSuccess(result) {
+  if (result.success) {
+    showSuccess('✅ Project succesvol aangemaakt!');
+    document.getElementById('projectForm').reset();
+    loadProjects();
+    loadProjectsForDropdowns();
+  } else {
+    showError('❌ Project aanmaken mislukt: ' + result.error);
+  }
+}
+
+function loadProjects() {
+  google.script.run
+    .withSuccessHandler(updateProjectsTable)
+    .withFailureHandler(handleError)
+    .getAllProjects();
+}
+
+function updateProjectsTable(result) {
+  const tbody = document.getElementById('projectsBody');
+  tbody.innerHTML = '';
+  
+  if (!result.success || result.records.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center">Geen projecten gevonden</td></tr>';
+    return;
+  }
+  
+  result.records.forEach(project => {
+    const fields = project.fields;
+    const row = document.createElement('tr');
+    
+    row.innerHTML = `
+      <td class="font-bold">${fields.Naam || '-'}</td>
+      <td><span class="status-badge status-pending">${fields.Type || '-'}</span></td>
+      <td>${fields.Beschrijving || '-'}</td>
+      <td>${formatDate(fields.Aangemaakt)}</td>
+      <td>
+        <button class="btn btn-danger btn-small" onclick="deleteProject('${project.id}')">
+          🗑️
+        </button>
+      </td>
+    `;
+    
+    tbody.appendChild(row);
+  });
+}
+
+function deleteProject(recordId) {
+  if (!confirm('🗑️ Weet je zeker dat je dit project wilt verwijderen?')) {
+    return;
+  }
+  
+  showInfo('🗑️ Project verwijderen...');
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        showSuccess('✅ Project succesvol verwijderd!');
+        loadProjects();
+        loadProjectsForDropdowns();
+      } else {
+        showError('❌ Project verwijderen mislukt: ' + result.error);
+      }
+    })
+    .withFailureHandler(handleError)
+    .deleteProject(recordId);
+}
+
+function loadProjectsForDropdowns() {
+  google.script.run
+    .withSuccessHandler(populateProjectDropdowns)
+    .withFailureHandler(function(error) {
+      console.error('Failed to load projects for dropdowns:', error);
+    })
+    .getAllProjects();
+}
+
+function populateProjectDropdowns(result) {
+  if (!result.success) return;
+  
+  const dropdowns = [
+    document.getElementById('transactionProject'),
+    document.getElementById('expenseProject'),
+    document.getElementById('reportProject')
+  ];
+  
+  dropdowns.forEach(dropdown => {
+    if (!dropdown) return;
+    
+    // Clear existing options except the first one
+    const firstOption = dropdown.querySelector('option');
+    dropdown.innerHTML = '';
+    if (firstOption) {
+      dropdown.appendChild(firstOption);
+    }
+    
+    // Add project options
+    result.records.forEach(project => {
+      const option = document.createElement('option');
+      option.value = project.fields.Naam;
+      option.textContent = project.fields.Naam;
+      dropdown.appendChild(option);
+    });
+  });
+}
+
+// ==================== BUG FIX 2: INVOICE MANAGEMENT (GEFIXED) ====================
+function openInvoiceModal() {
+  document.getElementById('invoiceModal').style.display = 'block';
+  generateInvoiceNumber();
+  
+  // Clear previous data
+  selectedClientData = null;
+  clearClientForm();
+  
+  // Set default dates
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('invoiceDate').value = today;
+  
+  // Auto-set project period to current month
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  
+  const projectPeriodField = document.getElementById('invoiceProjectPeriod');
+  if (projectPeriodField) {
+    projectPeriodField.value = `${startOfMonth.toLocaleDateString('nl-BE')} - ${endOfMonth.toLocaleDateString('nl-BE')}`;
+  }
+}
+
+function closeInvoiceModal() {
+  document.getElementById('invoiceModal').style.display = 'none';
+}
+
+function generateInvoiceNumber() {
+  google.script.run
+    .withSuccessHandler(function(invoiceNumber) {
+      document.getElementById('invoiceNumber').value = invoiceNumber;
+    })
+    .withFailureHandler(function(error) {
+      console.error('Failed to generate invoice number:', error);
+      const fallbackNumber = `${new Date().getFullYear()}-${Date.now().toString().slice(-3)}`;
+      document.getElementById('invoiceNumber').value = fallbackNumber;
+    })
+    .generateInvoiceNumber();
+}
+
+function addInvoiceService() {
+  const container = document.getElementById('invoiceServicesContainer');
+  const serviceCount = container.children.length + 1;
+  
+  const serviceDiv = document.createElement('div');
+  serviceDiv.className = 'invoice-service-item';
+  serviceDiv.innerHTML = `
+    <button type="button" class="remove-service" onclick="removeInvoiceService(this)">×</button>
+    <h5>🛠️ Dienst ${serviceCount}</h5>
+    <div class="form-group">
+      <label class="form-label">📝 Omschrijving *</label>
+      <input type="text" class="form-control service-description" required>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">🔢 Aantal</label>
+        <input type="number" class="form-control service-quantity" min="1" value="1" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">💰 Prijs (€)</label>
+        <input type="number" class="form-control service-price" step="0.01" min="0" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">📊 BTW</label>
+        <select class="form-control service-vat">
+          <option value="0">0% (Vrijgesteld)</option>
+          <option value="21" selected>21%</option>
+          <option value="6">6%</option>
+          <option value="12">12%</option>
+        </select>
+      </div>
+    </div>
+  `;
+  
+  container.appendChild(serviceDiv);
+}
+
+function removeInvoiceService(button) {
+  const serviceItem = button.closest('.invoice-service-item');
+  serviceItem.remove();
+  
+  // Renumber remaining services
+  const container = document.getElementById('invoiceServicesContainer');
+  const services = container.querySelectorAll('.invoice-service-item');
+  services.forEach((service, index) => {
+    const header = service.querySelector('h5');
+    header.textContent = `🛠️ Dienst ${index + 1}`;
+  });
+}
+
+function handleInvoiceSubmit(e) {
+  e.preventDefault();
+  
+  const services = [];
+  document.querySelectorAll('.invoice-service-item').forEach(item => {
+    const description = item.querySelector('.service-description').value;
+    const quantity = parseInt(item.querySelector('.service-quantity').value);
+    const unitPrice = parseFloat(item.querySelector('.service-price').value);
+    const vat = item.querySelector('.service-vat').value;
+    
+    if (description && quantity && unitPrice) {
+      services.push({
+        description: description,
+        quantity: quantity,
+        unitPrice: unitPrice,
+        vat: vat
+      });
+    }
+  });
+  
+  // Validation
+  if (services.length === 0) {
+    showError('❌ Voeg minimaal één dienst toe');
+    return;
+  }
+  
+  const invoiceData = {
+    invoiceNumber: document.getElementById('invoiceNumber').value,
+    invoiceDate: formatDateForInvoice(document.getElementById('invoiceDate').value),
+    clientCompany: document.getElementById('clientCompany').value,
+    contactPerson: document.getElementById('contactPerson').value,
+    address: document.getElementById('clientAddress').value,
+    postalCode: document.getElementById('clientPostalCode').value,
+    city: document.getElementById('clientCity').value,
+    country: 'België',
+    vatNumber: document.getElementById('clientVatNumber').value,
+    projectName: document.getElementById('invoiceProject').value,
+    projectPeriod: document.getElementById('invoiceProjectPeriod').value,
+    accountManager: document.getElementById('invoiceAccountManager').value,
+    services: services,
+    discount: 0
+  };
+  
+  // Validation
+  if (!invoiceData.clientCompany || !invoiceData.contactPerson || !invoiceData.projectName) {
+    showError('❌ Bedrijf, contactpersoon en projectnaam zijn verplicht');
+    return;
+  }
+  
+  // Save new client if not selected from autocomplete
+  if (!selectedClientData && invoiceData.clientCompany) {
+    saveNewClientFromInvoice();
+  }
+  
+  showInfo('📄 Factuur aanmaken...');
+  
+  google.script.run
+    .withSuccessHandler(handleInvoiceSuccess)
+    .withFailureHandler(handleError)
+    .createInvoice(invoiceData);
+}
+
+function handleInvoiceSuccess(result) {
+  if (result.success) {
+    let message = `✅ Factuur ${result.invoiceNumber} succesvol aangemaakt!`;
+    
+    if (result.pdfResult && result.pdfResult.success) {
+      message += `<br>📄 <a href="${result.pdfResult.downloadUrl}" target="_blank">Download PDF factuur</a>`;
+      
+      // Show PDF download section
+      document.getElementById('invoicePdfSection').style.display = 'block';
+      document.getElementById('invoicePdfLink').href = result.pdfResult.downloadUrl;
+      document.getElementById('invoicePdfLink').textContent = `📄 Download ${result.pdfResult.fileName}`;
+    }
+    
+    showSuccess(message);
+    closeInvoiceModal();
+    loadInvoices();
+    loadDashboard();
+  } else {
+    showError('❌ Factuur aanmaken mislukt: ' + result.error);
+  }
+}
+
+function loadInvoices() {
+  google.script.run
+    .withSuccessHandler(updateInvoicesTable)
+    .withFailureHandler(handleError)
+    .getAllTransactions();
+}
+
+function updateInvoicesTable(result) {
+  const tbody = document.getElementById('invoicesBody');
+  tbody.innerHTML = '';
+  
+  if (!result.success || result.records.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center">Geen facturen gevonden</td></tr>';
+    return;
+  }
+  
+  // Filter only invoices (Inkomsten)
+  const invoices = result.records.filter(record => record.fields.Select === 'Inkomsten');
+  
+  if (invoices.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center">Geen facturen gevonden</td></tr>';
+    return;
+  }
+  
+  invoices.forEach(invoice => {
+    const fields = invoice.fields;
+    const row = document.createElement('tr');
+    
+    row.innerHTML = `
+      <td>${formatDate(fields.Date)}</td>
+      <td class="font-bold">${fields.Name || '-'}</td>
+      <td>${fields.Beschrijving || '-'}</td>
+      <td>${fields.Project || 'Algemeen'}</td>
+      <td class="text-right text-success font-bold">${formatCurrency(fields.Bedrag)}</td>
+      <td><span class="status-badge status-paid">${fields.Status || 'Verzonden'}</span></td>
+      <td>
+        <button class="btn btn-danger btn-small" onclick="deleteTransaction('${invoice.id}')">
+          🗑️
+        </button>
+      </td>
+    `;
+    
+    tbody.appendChild(row);
+  });
+}
+
+function formatDateForInvoice(dateString) {
+  // Convert YYYY-MM-DD to DD/MM/YYYY
+  if (!dateString) return '';
+  const parts = dateString.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dateString;
+}
+
+// ==================== EXPENSES MANAGEMENT (GEFIXED) ====================
+function handleExpenseSubmit(e) {
+  e.preventDefault();
+  
+  const formData = {
+    date: document.getElementById('expenseDate').value,
+    expenseNumber: document.getElementById('expenseNumber').value,
+    description: document.getElementById('expenseDescription').value,
+    vendor: document.getElementById('expenseVendor').value,
+    project: document.getElementById('expenseProject').value,
+    category: document.getElementById('expenseCategory').value,
+    paymentMethod: document.getElementById('expensePaymentMethod').value,
+    amount: parseFloat(document.getElementById('expenseAmount').value),
+    vatPercentage: parseFloat(document.getElementById('expenseVAT').value)
+  };
+  
+  // Validation
+  if (!formData.description || !formData.vendor || !formData.category || !formData.amount) {
+    showError('❌ Vul alle verplichte velden in');
+    return;
+  }
+  
+  if (!formData.expenseNumber) {
+    generateExpenseNumberForForm();
+    return;
+  }
+  
+  showInfo('💾 Uitgave opslaan...');
+  
+  // Disable submit button
+  const submitBtn = document.getElementById('saveExpenseBtn');
+  submitBtn.disabled = true;
+  submitBtn.textContent = '⏳ Opslaan...';
+  
+  // Check if file is selected
+  if (selectedExpenseFile) {
+    uploadExpenseWithFile(formData, selectedExpenseFile);
+  } else {
+    // Create expense without file
+    google.script.run
+      .withSuccessHandler(handleExpenseSuccess)
+      .withFailureHandler(handleExpenseError)
+      .createExpense(formData);
+  }
+}
+
+function uploadExpenseWithFile(expenseData, file) {
+  // Show upload progress
+  showUploadProgress(true);
+  
+  // Convert file to base64 for Google Apps Script
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const base64Data = e.target.result.split(',')[1]; // Remove data:mime;base64, prefix
+    
+    // Create blob object for Google Apps Script
+    const fileBlob = {
+      data: base64Data,
+      name: file.name,
+      mimeType: file.type,
+      size: file.size
+    };
+    
+    google.script.run
+      .withSuccessHandler(handleExpenseWithFileSuccess)
+      .withFailureHandler(handleExpenseError)
+      .createExpenseWithFile(expenseData, fileBlob, file.name);
+  };
+  
+  reader.onerror = function() {
+    showError('❌ Fout bij lezen van bestand');
+    resetSubmitButton();
+  };
+  
+  reader.readAsDataURL(file);
+}
+
+function showUploadProgress(show) {
+  const progressDiv = document.getElementById('uploadProgress');
+  if (show) {
+    progressDiv.style.display = 'block';
+    // Simulate progress
+    let progress = 0;
+    const interval = setInterval(() => {
+      progress += Math.random() * 15;
+      if (progress > 90) progress = 90;
+      document.getElementById('progressFill').style.width = progress + '%';
+    }, 200);
+    
+    // Store interval ID to clear later
+    progressDiv.dataset.interval = interval;
+  } else {
+    progressDiv.style.display = 'none';
+    if (progressDiv.dataset.interval) {
+      clearInterval(parseInt(progressDiv.dataset.interval));
+    }
+  }
+}
+
+function handleExpenseWithFileSuccess(result) {
+  resetSubmitButton();
+  showUploadProgress(false);
+  
+  if (result.success) {
+    if (result.fileResult) {
+      showSuccess(`✅ Uitgave en bestand succesvol opgeslagen!<br>
+        📎 Bestand: <a href="${result.fileResult.viewUrl}" target="_blank">${result.fileResult.fileName}</a>`);
+    } else {
+      showSuccess('✅ Uitgave succesvol opgeslagen!');
+    }
+    
+    resetExpenseForm();
+    loadExpenses();
+    loadDashboard();
+  } else {
+    showError('❌ Opslaan mislukt: ' + result.error);
+  }
+}
+
+function handleExpenseSuccess(result) {
+  resetSubmitButton();
+  
+  if (result.success) {
+    showSuccess('✅ Uitgave succesvol opgeslagen!');
+    resetExpenseForm();
+    loadExpenses();
+    loadDashboard();
+  } else {
+    showError('❌ Opslaan mislukt: ' + result.error);
+  }
+}
+
+function handleExpenseError(error) {
+  resetSubmitButton();
+  showUploadProgress(false);
+  showError('❌ Fout bij opslaan: ' + error.message);
+}
+
+function resetSubmitButton() {
+  const submitBtn = document.getElementById('saveExpenseBtn');
+  submitBtn.disabled = false;
+  submitBtn.textContent = '✅ Uitgave Opslaan';
+}
+
+function resetExpenseForm() {
+  document.getElementById('expenseForm').reset();
+  setDefaultDates();
+  calculateExpenseTotal();
+  removeFile();
+  generateExpenseNumberForForm();
+}
+
+function generateExpenseNumberForForm() {
+  google.script.run
+    .withSuccessHandler(function(expenseNumber) {
+      document.getElementById('expenseNumber').value = expenseNumber;
+    })
+    .withFailureHandler(function(error) {
+      console.error('Failed to generate expense number:', error);
+      const fallbackNumber = `UIT-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`;
+      document.getElementById('expenseNumber').value = fallbackNumber;
+    })
+    .generateExpenseNumber();
+}
+
+function calculateExpenseTotal() {
+  const amount = parseFloat(document.getElementById('expenseAmount').value) || 0;
+  const vatRate = parseFloat(document.getElementById('expenseVAT').value) || 0;
+  const vatAmount = amount * (vatRate / 100);
+  const total = amount + vatAmount;
+  
+  document.getElementById('expenseTotal').value = total.toFixed(2);
+}
+
+function loadExpenses() {
+  google.script.run
+    .withSuccessHandler(updateExpensesTable)
+    .withFailureHandler(handleError)
+    .getAllTransactions();
+}
+
+function updateExpensesTable(result) {
+  const tbody = document.getElementById('expensesBody');
+  tbody.innerHTML = '';
+  
+  if (!result.success || result.records.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center">Geen uitgaven gevonden</td></tr>';
+    return;
+  }
+  
+  // Filter only expenses (Uitgaven)
+  const expenses = result.records.filter(record => record.fields.Select === 'Uitgaven');
+  
+  if (expenses.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center">Geen uitgaven gevonden</td></tr>';
+    return;
+  }
+  
+  expenses.forEach(expense => {
+    const fields = expense.fields;
+    const row = document.createElement('tr');
+    
+    // Check for attachment with FIXED field names
+    let attachmentHtml = '<span class="no-attachment">Geen bijlage</span>';
+    if (fields['Bijlage URL']) {
+      const fileName = fields['Bijlage Bestandsnaam'] || 'Bijlage';
+      attachmentHtml = `<a href="${fields['Bijlage URL']}" target="_blank" class="file-attachment">
+        📎 ${fileName.length > 20 ? fileName.substring(0, 20) + '...' : fileName}
+      </a>`;
+    }
+    
+    row.innerHTML = `
+      <td>${formatDate(fields.Date)}</td>
+      <td class="font-bold">${fields.Name || '-'}</td>
+      <td>${fields.Beschrijving || '-'}</td>
+      <td>${fields.Leverancier || '-'}</td>
+      <td><span class="status-badge status-pending">${fields.Categorie || '-'}</span></td>
+      <td class="text-right text-error font-bold">${formatCurrency(fields.Bedrag)}</td>
+      <td class="text-right font-bold">${formatCurrency(fields.Totaal)}</td>
+      <td>${attachmentHtml}</td>
+      <td>
+        <button class="btn btn-danger btn-small" onclick="deleteTransaction('${expense.id}')">
+          🗑️
+        </button>
+      </td>
+    `;
+    
+    tbody.appendChild(row);
+  });
+}
+
+// ==================== BUG FIX 4: REPORTS (GEFIXED) ====================
+function generateReport() {
+  const config = {
+    transactionType: document.getElementById('reportType').value,
+    project: document.getElementById('reportProject').value,
+    periodType: document.getElementById('reportPeriod').value,
+    format: document.getElementById('reportFormat').value
+  };
+  
+  showInfo('📊 Rapport genereren...');
+  
+  google.script.run
+    .withSuccessHandler(handleReportSuccess)
+    .withFailureHandler(handleError)
+    .generateReport(config);
+}
+
+function handleReportSuccess(result) {
+  if (result.success) {
+    currentData.reportData = result.data;
+    displayReportResults(result.data);
+    document.getElementById('exportPdfBtn').style.display = 'inline-flex';
+    showSuccess('✅ Rapport gegenereerd!');
+  } else {
+    showError('❌ Rapport genereren mislukt: ' + result.error);
+  }
+}
+
+function displayReportResults(data) {
+  const resultsDiv = document.getElementById('reportResults');
+  const summaryDiv = document.getElementById('reportSummary');
+  const tableBody = document.getElementById('reportResultsBody');
+  
+  // Show results section
+  resultsDiv.style.display = 'block';
+  
+  // Populate summary cards
+  summaryDiv.innerHTML = `
+    <div class="summary-item">
+      <div class="summary-value text-success">${formatCurrency(data.summary.totalIncome)}</div>
+      <div class="summary-label">Totale Inkomsten</div>
+    </div>
+    <div class="summary-item">
+      <div class="summary-value text-error">${formatCurrency(data.summary.totalExpenses)}</div>
+      <div class="summary-label">Totale Uitgaven</div>
+    </div>
+    <div class="summary-item">
+      <div class="summary-value ${data.summary.netResult >= 0 ? 'text-success' : 'text-error'}">${formatCurrency(data.summary.netResult)}</div>
+      <div class="summary-label">Netto Resultaat</div>
+    </div>
+    <div class="summary-item">
+      <div class="summary-value">${data.summary.transactionCount}</div>
+      <div class="summary-label">Transacties</div>
+    </div>
+  `;
+  
+  // Populate detailed table
+  tableBody.innerHTML = '';
+  
+  if (data.transactions.length === 0) {
+    tableBody.innerHTML = '<tr><td colspan="8" class="text-center">Geen transacties gevonden voor de geselecteerde criteria</td></tr>';
+    return;
+  }
+  
+  data.transactions.forEach(transaction => {
+    const fields = transaction.fields;
+    const row = document.createElement('tr');
+    
+    row.innerHTML = `
+      <td>${formatDate(fields.Date)}</td>
+      <td><span class="status-badge ${fields.Select === 'Inkomsten' ? 'status-paid' : 'status-pending'}">${fields.Select}</span></td>
+      <td>${fields.Name || '-'}</td>
+      <td>${fields.Beschrijving || '-'}</td>
+      <td>${fields.Project || 'Algemeen'}</td>
+      <td class="text-right ${fields.Select === 'Inkomsten' ? 'text-success' : 'text-error'} font-bold">${formatCurrency(fields.Bedrag)}</td>
+      <td class="text-right">${formatCurrency(fields['BTW Bedrag'] || 0)}</td>
+      <td class="text-right font-bold">${formatCurrency(fields.Totaal)}</td>
+    `;
+    
+    tableBody.appendChild(row);
+  });
+}
+
+function exportReportPDF() {
+  if (!currentData.reportData) {
+    showError('❌ Geen rapport gegevens beschikbaar');
+    return;
+  }
+  
+  showInfo('📄 PDF rapport exporteren...');
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        showSuccess(`✅ Rapport PDF succesvol geëxporteerd! <a href="${result.downloadUrl}" target="_blank">Download hier</a>`);
+        
+        // Show PDF download section
+        document.getElementById('reportPdfSection').style.display = 'block';
+        document.getElementById('reportPdfLink').href = result.downloadUrl;
+        document.getElementById('reportPdfLink').textContent = `📊 Download ${result.fileName}`;
+      } else {
+        showError('❌ PDF export mislukt: ' + result.error);
+      }
+    })
+    .withFailureHandler(handleError)
+    .exportReportToPDF(currentData.reportData);
+}
+
+// ==================== NACE CODES ====================
+function loadNACECodes() {
+  google.script.run
+    .withSuccessHandler(populateNACEDropdown)
+    .withFailureHandler(function(error) {
+      console.error('Failed to load NACE codes:', error);
+    })
+    .getCultureNACECodes();
+}
+
+function populateNACEDropdown(result) {
+  if (!result.success) return;
+  
+  const dropdown = document.getElementById('transactionNACE');
+  if (!dropdown) return;
+  
+  // Clear existing options except the first one
+  const firstOption = dropdown.querySelector('option');
+  dropdown.innerHTML = '';
+  if (firstOption) {
+    dropdown.appendChild(firstOption);
+  }
+  
+  // Add NACE code options
+  result.codes.forEach(code => {
+    const option = document.createElement('option');
+    option.value = code.code;
+    option.textContent = `${code.code} - ${code.description}`;
+    dropdown.appendChild(option);
+  });
+}
+
+// ==================== UTILITY FUNCTIONS ====================
+function formatCurrency(amount) {
+  return new Intl.NumberFormat('nl-BE', {
+    style: 'currency',
+    currency: 'EUR'
+  }).format(amount || 0);
+}
+
+function formatDate(dateString) {
+  if (!dateString) return '-';
+  return new Date(dateString).toLocaleDateString('nl-BE');
+}
+
+function setDefaultDates() {
+  const today = new Date().toISOString().split('T')[0];
+  
+  const transactionDate = document.getElementById('transactionDate');
+  if (transactionDate && !transactionDate.value) {
+    transactionDate.value = today;
+  }
+  
+  const expenseDate = document.getElementById('expenseDate');
+  if (expenseDate && !expenseDate.value) {
+    expenseDate.value = today;
+  }
+}
+
+// ==================== ALERT FUNCTIONS ====================
+function showSuccess(message) {
+  showAlert('successAlert', message);
+}
+
+function showError(message) {
+  showAlert('errorAlert', message);
+}
+
+function showInfo(message) {
+  showAlert('infoAlert', message);
+}
+
+function showAlert(alertId, message) {
+  hideAlerts();
+  const alert = document.getElementById(alertId);
+  alert.innerHTML = message;
+  alert.classList.add('show');
+  
+  setTimeout(() => {
+    alert.classList.remove('show');
+  }, 5000);
+}
+
+function hideAlerts() {
+  ['successAlert', 'errorAlert', 'infoAlert'].forEach(id => {
+    document.getElementById(id).classList.remove('show');
+  });
+}
+
+function handleError(error) {
+  console.error('System error:', error);
+  showError('❌ Systeem fout: ' + (error.message || error));
+}
+
+// ==================== SYSTEM FUNCTIONS ====================
+function refreshData() {
+  showInfo('🔄 Gegevens verversen...');
+  loadDashboard();
+  loadProjectsForDropdowns();
+  loadNACECodes();
+}
+
+// Initialize expense number on page load
+document.addEventListener('DOMContentLoaded', function() {
+  generateExpenseNumberForForm();
+});
+</script>
