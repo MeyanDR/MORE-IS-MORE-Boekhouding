@@ -1,20 +1,85 @@
 // Code.gs - VZW Accounting System - VOLLEDIG GEFIXTE VERSIE 4.0
 // Alle bugs opgelost inclusief klanten zoeken, PDF export, file upload en styling
-// ==================== CONFIGURATIE ====================
+// ==================== VERBETERDE CONFIGURATIE (502 ERROR PREVENTION) ====================
 const CONFIG = {
   production: {
     airtableToken: 'patGyvyT913BTnau0.c7200073a6a99aaeb420fd5a8beaecc85494adecbcc18cfed98f54cdee86f743',
     airtableBase: 'appPwcdZUr8yfiGvP',
-    debugMode: false,
-    rateLimitDelay: 200
+    debugMode: true, // Temporarily enable for debugging
+    rateLimitDelay: 800, // Verhoogd van 200ms naar 800ms
+    maxRetries: 3,
+    requestTimeout: 30000 // 30 seconden timeout
   }
 };
 
+// VERBETERDE DRIVE FOLDERS CONFIG
 const DRIVE_FOLDERS = {
   INVOICES: '1JotWJZtejm6r5FGF4qzC29JYq3XJm7VT',
   REPORTS: '1aPVb4sWg-D5fE0pg3hSI4xlx3Sfqrpp5',
   EXPENSES: '1T0dz62ya_-IQc96Uk0eVQfNtVm0Jgqll'
 };
+
+// VERBETERDE ERROR HANDLER MET MEER DETAIL
+class ErrorHandler {
+  static handle(error, context = {}) {
+    const errorInfo = {
+      timestamp: new Date().toISOString(),
+      message: error.message,
+      stack: error.stack,
+      context: context,
+      user: Session.getActiveUser().getEmail()
+    };
+    
+    console.error('=== SYSTEM ERROR ===');
+    console.error('Error Info:', errorInfo);
+    console.error('===================');
+    
+    // Log to Google Apps Script console for debugging
+    if (CONFIG.production.debugMode) {
+      console.log('Full error context:', JSON.stringify(context, null, 2));
+    }
+    
+    return {
+      success: false,
+      error: this.getUserFriendlyMessage(error),
+      technicalDetails: CONFIG.production.debugMode ? error.message : 'Contact support if this persists',
+      timestamp: errorInfo.timestamp
+    };
+  }
+  
+  static getUserFriendlyMessage(error) {
+    const friendlyMessages = {
+      'RATE_LIMIT_EXCEEDED': 'Het systeem is momenteel druk bezet. Probeer het over een minuut opnieuw.',
+      'INVALID_DATA': 'Controleer je invoer en probeer opnieuw.',
+      'PERMISSION_DENIED': 'Je hebt geen toestemming voor deze actie.',
+      'NETWORK_ERROR': 'Verbindingsprobleem. Probeer het opnieuw.',
+      'VALIDATION_ERROR': 'Controleer je gegevens en probeer opnieuw.',
+      'INVALID_MULTIPLE_CHOICE_OPTIONS': 'Sommige opties moeten eerst in Airtable aangemaakt worden.',
+      'HTTP 502': 'Server tijdelijk niet beschikbaar. Probeer het over 30 seconden opnieuw.',
+      'HTTP 503': 'Service tijdelijk niet beschikbaar. Probeer het over een minuut opnieuw.',
+      'HTTP 429': 'Te veel verzoeken. Wacht even en probeer opnieuw.',
+      'timeout': 'Verzoek duurde te lang. Probeer opnieuw met minder data.',
+      'Connection failure': 'Verbindingsprobleem met Airtable. Controleer je internetverbinding.'
+    };
+    
+    for (const [key, message] of Object.entries(friendlyMessages)) {
+      if (error.message.toLowerCase().includes(key.toLowerCase())) {
+        return message;
+      }
+    }
+    
+    // Special handling for common Google Apps Script errors
+    if (error.message.includes('ScriptError')) {
+      return 'Er is een tijdelijke fout opgetreden. Probeer het over een minuut opnieuw.';
+    }
+    
+    if (error.message.includes('Exception')) {
+      return 'Er is een onverwachte fout opgetreden. Controleer je gegevens en probeer opnieuw.';
+    }
+    
+    return 'Er is een onverwachte fout opgetreden. Probeer het opnieuw of neem contact op met support.';
+  }
+}
 
 const COMPANY_INFO = {
   name: 'MORE IS MORE! Agency',
