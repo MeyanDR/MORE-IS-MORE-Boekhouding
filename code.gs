@@ -120,11 +120,69 @@ class AirtableService {
     this.baseUrl = 'https://api.airtable.com/v0/';
     this.token = CONFIG.production.airtableToken;
     this.baseId = CONFIG.production.airtableBase;
+    this.maxRetries = 3;
+    this.baseDelay = 500; // Verhoogd van 200ms naar 500ms
+  }
+  
+  // CRITICAL FIX: Verbeterde retry logic met exponential backoff
+  makeRequestWithRetry(url, options, retryCount = 0) {
+    try {
+      // Progressieve delay - steeds langer wachten
+      const delay = this.baseDelay * Math.pow(2, retryCount);
+      Utilities.sleep(delay);
+      
+      console.log(`Making request attempt ${retryCount + 1} to ${url}`);
+      
+      const response = UrlFetchApp.fetch(url, {
+        ...options,
+        muteHttpExceptions: true,
+        timeout: 30000 // 30 seconden timeout
+      });
+      
+      const responseCode = response.getResponseCode();
+      console.log(`Response code: ${responseCode}`);
+      
+      // Success cases
+      if (responseCode === 200) {
+        return {
+          success: true,
+          response: response
+        };
+      }
+      
+      // Rate limit cases - retry with longer delay
+      if (responseCode === 429 || responseCode === 502 || responseCode === 503) {
+        if (retryCount < this.maxRetries) {
+          console.log(`Rate limited or server error (${responseCode}), retrying in ${delay * 2}ms...`);
+          Utilities.sleep(delay * 2); // Extra lange pause voor rate limiting
+          return this.makeRequestWithRetry(url, options, retryCount + 1);
+        }
+      }
+      
+      // Other errors
+      const errorText = response.getContentText();
+      throw new Error(`HTTP ${responseCode}: ${errorText}`);
+      
+    } catch (error) {
+      if (retryCount < this.maxRetries && (
+        error.message.includes('timeout') || 
+        error.message.includes('502') ||
+        error.message.includes('503') ||
+        error.message.includes('rate limit')
+      )) {
+        console.log(`Request failed (${error.message}), retrying...`);
+        const delay = this.baseDelay * Math.pow(2, retryCount + 1);
+        Utilities.sleep(delay);
+        return this.makeRequestWithRetry(url, options, retryCount + 1);
+      }
+      
+      throw error;
+    }
   }
   
   createRecord(tableName, fields, options = {}) {
     try {
-      Utilities.sleep(CONFIG.production.rateLimitDelay);
+      console.log(`Creating record in ${tableName}:`, fields);
       
       if (!fields || Object.keys(fields).length === 0) {
         throw new Error('VALIDATION_ERROR: No data provided');
@@ -137,39 +195,40 @@ class AirtableService {
         typecast: options.typecast !== false
       };
       
-      const response = UrlFetchApp.fetch(`${this.baseUrl}${this.baseId}/${tableName}`, {
+      const requestOptions = {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.token}`,
           'Content-Type': 'application/json'
         },
-        payload: JSON.stringify(payload),
-        muteHttpExceptions: true
-      });
+        payload: JSON.stringify(payload)
+      };
       
-      const responseCode = response.getResponseCode();
+      const result = this.makeRequestWithRetry(
+        `${this.baseUrl}${this.baseId}/${tableName}`, 
+        requestOptions
+      );
       
-      if (responseCode === 200) {
-        const result = JSON.parse(response.getContentText());
+      if (result.success) {
+        const data = JSON.parse(result.response.getContentText());
         return {
           success: true,
-          record: result.records[0],
+          record: data.records[0],
           message: 'Record successfully created'
         };
       } else {
-        const errorText = response.getContentText();
-        console.error('Airtable Error:', errorText);
-        throw new Error(`AIRTABLE_ERROR: HTTP ${responseCode} - ${errorText}`);
+        throw new Error('Request failed after retries');
       }
       
     } catch (error) {
+      console.error('AirtableService.createRecord error:', error);
       return ErrorHandler.handle(error, { table: tableName, fields });
     }
   }
   
   getRecords(tableName, options = {}) {
     try {
-      Utilities.sleep(CONFIG.production.rateLimitDelay);
+      console.log(`Getting records from ${tableName}:`, options);
       
       let url = `${this.baseUrl}${this.baseId}/${tableName}`;
       
@@ -182,39 +241,36 @@ class AirtableService {
         url += '?' + params.join('&');
       }
       
-      const response = UrlFetchApp.fetch(url, {
+      const requestOptions = {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${this.token}`,
           'Content-Type': 'application/json'
-        },
-        muteHttpExceptions: true
-      });
+        }
+      };
       
-      const responseCode = response.getResponseCode();
+      const result = this.makeRequestWithRetry(url, requestOptions);
       
-      if (responseCode === 200) {
-        const data = JSON.parse(response.getContentText());
+      if (result.success) {
+        const data = JSON.parse(result.response.getContentText());
         return {
           success: true,
           records: data.records || [],
           count: data.records ? data.records.length : 0
         };
-      } else if (responseCode === 429) {
-        Utilities.sleep(1000);
-        return this.getRecords(tableName, options);
       } else {
-        throw new Error(`AIRTABLE_ERROR: HTTP ${responseCode}`);
+        throw new Error('Request failed after retries');
       }
       
     } catch (error) {
+      console.error('AirtableService.getRecords error:', error);
       return ErrorHandler.handle(error, { table: tableName, options });
     }
   }
   
   updateRecord(tableName, recordId, fields) {
     try {
-      Utilities.sleep(CONFIG.production.rateLimitDelay);
+      console.log(`Updating record ${recordId} in ${tableName}:`, fields);
       
       const payload = {
         records: [{
@@ -224,54 +280,64 @@ class AirtableService {
         typecast: true
       };
       
-      const response = UrlFetchApp.fetch(`${this.baseUrl}${this.baseId}/${tableName}`, {
+      const requestOptions = {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${this.token}`,
           'Content-Type': 'application/json'
         },
-        payload: JSON.stringify(payload),
-        muteHttpExceptions: true
-      });
+        payload: JSON.stringify(payload)
+      };
       
-      if (response.getResponseCode() === 200) {
-        const result = JSON.parse(response.getContentText());
+      const result = this.makeRequestWithRetry(
+        `${this.baseUrl}${this.baseId}/${tableName}`, 
+        requestOptions
+      );
+      
+      if (result.success) {
+        const data = JSON.parse(result.response.getContentText());
         return {
           success: true,
-          record: result.records[0],
+          record: data.records[0],
           message: 'Record successfully updated'
         };
       } else {
-        throw new Error(`AIRTABLE_ERROR: HTTP ${response.getResponseCode()}`);
+        throw new Error('Request failed after retries');
       }
       
     } catch (error) {
+      console.error('AirtableService.updateRecord error:', error);
       return ErrorHandler.handle(error, { table: tableName, recordId, fields });
     }
   }
   
   deleteRecord(tableName, recordId) {
     try {
-      Utilities.sleep(CONFIG.production.rateLimitDelay);
+      console.log(`Deleting record ${recordId} from ${tableName}`);
       
-      const response = UrlFetchApp.fetch(`${this.baseUrl}${this.baseId}/${tableName}/${recordId}`, {
+      const requestOptions = {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${this.token}`
-        },
-        muteHttpExceptions: true
-      });
+        }
+      };
       
-      if (response.getResponseCode() === 200) {
+      const result = this.makeRequestWithRetry(
+        `${this.baseUrl}${this.baseId}/${tableName}/${recordId}`, 
+        requestOptions
+      );
+      
+      if (result.success) {
         return {
           success: true,
           message: 'Record successfully deleted'
         };
       } else {
-        throw new Error(`AIRTABLE_ERROR: HTTP ${response.getResponseCode()}`);
+        throw new Error('Request failed after retries');
       }
       
     } catch (error) {
+      console.error('AirtableService.deleteRecord error:', error);
       return ErrorHandler.handle(error, { table: tableName, recordId });
     }
   }
