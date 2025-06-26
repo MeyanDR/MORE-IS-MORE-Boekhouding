@@ -638,70 +638,266 @@ function deleteTransaction(recordId) {
 }
 
 // ==================== PROJECTS ====================
+// ==================== VERBETERDE PROJECT SUBMIT (502 ERROR FIX) ====================
 function handleProjectSubmit(e) {
   e.preventDefault();
   
+  // Disable submit button immediately
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  const originalText = submitBtn.textContent;
+  submitBtn.disabled = true;
+  submitBtn.textContent = '⏳ Project aanmaken...';
+  
   const projectData = {
-    Naam: document.getElementById('projectName').value,
-    Type: document.getElementById('projectType').value,
-    Beschrijving: document.getElementById('projectDescription').value
+    Naam: document.getElementById('projectName').value.trim(),
+    Type: document.getElementById('projectType').value.trim(),
+    Beschrijving: document.getElementById('projectDescription').value.trim()
   };
   
-  showInfo('💾 Project aanmaken...');
-  
-  google.script.run
-    .withSuccessHandler(handleProjectSuccess)
-    .withFailureHandler(handleError)
-    .createProject(projectData);
-}
-
-function handleProjectSuccess(result) {
-  if (result.success) {
-    showSuccess('✅ Project succesvol aangemaakt!');
-    document.getElementById('projectForm').reset();
-    loadProjects();
-    loadProjectsForDropdowns();
-  } else {
-    showError('❌ Project aanmaken mislukt: ' + result.error);
-  }
-}
-
-function loadProjects() {
-  google.script.run
-    .withSuccessHandler(updateProjectsTable)
-    .withFailureHandler(handleError)
-    .getAllProjects();
-}
-
-function updateProjectsTable(result) {
-  const tbody = document.getElementById('projectsBody');
-  tbody.innerHTML = '';
-  
-  if (!result.success || result.records.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="text-center">Geen projecten gevonden</td></tr>';
+  // Enhanced validation
+  if (!projectData.Naam || projectData.Naam.length < 2) {
+    showError('❌ Projectnaam moet minimaal 2 karakters lang zijn');
+    resetSubmitButton(submitBtn, originalText);
     return;
   }
   
-  result.records.forEach(project => {
-    const fields = project.fields;
-    const row = document.createElement('tr');
-    
-    row.innerHTML = `
-      <td class="font-bold">${fields.Naam || '-'}</td>
-      <td><span class="status-badge status-pending">${fields.Type || '-'}</span></td>
-      <td>${fields.Beschrijving || '-'}</td>
-      <td>${formatDate(fields.Aangemaakt)}</td>
-      <td>
-        <button class="btn btn-danger btn-small" onclick="deleteProject('${project.id}')">
-          🗑️
-        </button>
-      </td>
-    `;
-    
-    tbody.appendChild(row);
-  });
+  if (!projectData.Type) {
+    showError('❌ Selecteer een projecttype');
+    resetSubmitButton(submitBtn, originalText);
+    return;
+  }
+  
+  showInfo('💾 Project aanmaken... Dit kan even duren.');
+  
+  // Set longer timeout for project creation
+  const timeoutId = setTimeout(() => {
+    showError('⏰ Project aanmaken duurt langer dan verwacht. Controleer je internetverbinding.');
+  }, 15000);
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      clearTimeout(timeoutId);
+      resetSubmitButton(submitBtn, originalText);
+      
+      if (result.success) {
+        showSuccess('✅ Project succesvol aangemaakt!');
+        document.getElementById('projectForm').reset();
+        loadProjects();
+        loadProjectsForDropdowns();
+      } else {
+        if (result.error.includes('502') || result.error.includes('timeout')) {
+          showError('🔄 Server tijdelijk overbelast. Probeer het over 30 seconden opnieuw.');
+        } else {
+          showError('❌ Project aanmaken mislukt: ' + result.error);
+        }
+      }
+    })
+    .withFailureHandler(function(error) {
+      clearTimeout(timeoutId);
+      resetSubmitButton(submitBtn, originalText);
+      
+      console.error('Project creation failed:', error);
+      
+      if (error.message.includes('502') || error.message.includes('NetworkError')) {
+        showError('🔄 Verbindingsprobleem met de server. Wacht 30 seconden en probeer opnieuw.');
+      } else if (error.message.includes('timeout')) {
+        showError('⏰ Verzoek duurde te lang. Probeer opnieuw met een stabielere internetverbinding.');
+      } else {
+        showError('❌ Onverwachte fout bij project aanmaken: ' + error.message);
+      }
+    })
+    .createProject(projectData);
 }
 
+// ==================== VERBETERDE INVOICE SUBMIT (PDF EXPORT FIX) ====================
+function handleInvoiceSubmit(e) {
+  e.preventDefault();
+  
+  // Disable form during processing
+  const form = document.getElementById('invoiceForm');
+  const submitBtn = form.querySelector('button[type="submit"]');
+  const originalText = submitBtn.textContent;
+  submitBtn.disabled = true;
+  submitBtn.textContent = '⏳ Factuur maken...';
+  
+  const services = [];
+  document.querySelectorAll('.invoice-service-item').forEach(item => {
+    const description = item.querySelector('.service-description').value.trim();
+    const quantity = parseInt(item.querySelector('.service-quantity').value);
+    const unitPrice = parseFloat(item.querySelector('.service-price').value);
+    const vat = item.querySelector('.service-vat').value;
+    
+    if (description && quantity && unitPrice) {
+      services.push({
+        description: description,
+        quantity: quantity,
+        unitPrice: unitPrice,
+        vat: vat
+      });
+    }
+  });
+  
+  // Validation
+  if (services.length === 0) {
+    showError('❌ Voeg minimaal één dienst toe');
+    resetSubmitButton(submitBtn, originalText);
+    return;
+  }
+  
+  const invoiceData = {
+    invoiceNumber: document.getElementById('invoiceNumber').value.trim(),
+    invoiceDate: formatDateForInvoice(document.getElementById('invoiceDate').value),
+    clientCompany: document.getElementById('clientCompany').value.trim(),
+    contactPerson: document.getElementById('contactPerson').value.trim(),
+    address: document.getElementById('clientAddress').value.trim(),
+    postalCode: document.getElementById('clientPostalCode').value.trim(),
+    city: document.getElementById('clientCity').value.trim(),
+    country: 'België',
+    vatNumber: document.getElementById('clientVatNumber').value.trim(),
+    projectName: document.getElementById('invoiceProject').value.trim(),
+    projectPeriod: document.getElementById('invoiceProjectPeriod').value.trim(),
+    accountManager: document.getElementById('invoiceAccountManager').value.trim(),
+    services: services,
+    discount: 0
+  };
+  
+  // Enhanced validation
+  if (!invoiceData.clientCompany || !invoiceData.contactPerson || !invoiceData.projectName) {
+    showError('❌ Bedrijf, contactpersoon en projectnaam zijn verplicht');
+    resetSubmitButton(submitBtn, originalText);
+    return;
+  }
+  
+  if (!invoiceData.invoiceNumber || !invoiceData.invoiceNumber.match(/^\d{4}-\d{3}$/)) {
+    showError('❌ Factuurnummer moet formaat YYYY-XXX hebben (bijv. 2025-009)');
+    resetSubmitButton(submitBtn, originalText);
+    return;
+  }
+  
+  // Save new client if needed
+  if (!selectedClientData && invoiceData.clientCompany) {
+    saveNewClientFromInvoice();
+  }
+  
+  showInfo('📄 Factuur aanmaken en PDF genereren... Dit kan 30-60 seconden duren.');
+  
+  // Extended timeout for PDF generation
+  const timeoutId = setTimeout(() => {
+    showError('⏰ PDF generatie duurt langer dan verwacht. Dit kan bij grote facturen voorkomen.');
+  }, 30000);
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      clearTimeout(timeoutId);
+      resetSubmitButton(submitBtn, originalText);
+      
+      if (result.success) {
+        let message = `✅ Factuur ${result.invoiceNumber} succesvol aangemaakt!`;
+        
+        if (result.pdfResult && result.pdfResult.success) {
+          message += `<br>📄 PDF succesvol gegenereerd en opgeslagen`;
+          
+          // Show PDF download section
+          document.getElementById('invoicePdfSection').style.display = 'block';
+          document.getElementById('invoicePdfLink').href = result.pdfResult.downloadUrl;
+          document.getElementById('invoicePdfLink').textContent = `📄 Download ${result.pdfResult.fileName}`;
+          
+          showSuccess(`${message}<br>📁 Opgeslagen in: ${result.pdfResult.folderName}`);
+        } else if (result.pdfResult) {
+          showError(`⚠️ Factuur aangemaakt maar PDF fout: ${result.pdfResult.error}<br>Je kunt de factuur handmatig exporteren via de facturen lijst.`);
+        } else {
+          showSuccess(message);
+        }
+        
+        closeInvoiceModal();
+        loadInvoices();
+        loadDashboard();
+      } else {
+        showError('❌ Factuur aanmaken mislukt: ' + result.error);
+      }
+    })
+    .withFailureHandler(function(error) {
+      clearTimeout(timeoutId);
+      resetSubmitButton(submitBtn, originalText);
+      
+      console.error('Invoice creation failed:', error);
+      
+      if (error.message.includes('PDF') || error.message.includes('Document')) {
+        showError('📄 Factuur data opgeslagen, maar PDF generatie mislukt. Probeer later opnieuw via de facturen lijst.');
+      } else if (error.message.includes('Drive') || error.message.includes('folder')) {
+        showError('📁 Probleem met Google Drive toegang. Controleer de folder rechten.');
+      } else if (error.message.includes('timeout') || error.message.includes('502')) {
+        showError('⏰ Server tijdelijk overbelast. Probeer het over een minuut opnieuw.');
+      } else {
+        showError('❌ Factuur aanmaken mislukt: ' + error.message);
+      }
+    })
+    .createInvoice(invoiceData);
+}
+
+// ==================== UTILITY FUNCTIONS ====================
+function resetSubmitButton(button, originalText) {
+  if (button) {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
+// Enhanced alert system with auto-dismiss for long messages
+function showAlert(alertId, message) {
+  hideAlerts();
+  const alert = document.getElementById(alertId);
+  alert.innerHTML = message;
+  alert.classList.add('show');
+  
+  // Auto-dismiss after longer time for important messages
+  const dismissTime = message.length > 100 ? 12000 : 8000;
+  setTimeout(() => {
+    alert.classList.remove('show');
+  }, dismissTime);
+}
+
+// Add connection test function with retry
+function testConnectionWithRetry() {
+  let attempts = 0;
+  const maxAttempts = 3;
+  
+  function attemptConnection() {
+    attempts++;
+    updateConnectionStatus('testing', `Verbinding testen... (Poging ${attempts}/${maxAttempts})`);
+    
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result.success) {
+          updateConnectionStatus('connected', 'Verbonden met Airtable');
+          showSuccess('✅ Verbinding met Airtable succesvol getest!');
+        } else {
+          if (attempts < maxAttempts) {
+            setTimeout(attemptConnection, 2000);
+          } else {
+            updateConnectionStatus('disconnected', 'Verbinding mislukt');
+            showError('❌ Verbinding mislukt na 3 pogingen: ' + result.error);
+          }
+        }
+      })
+      .withFailureHandler(function(error) {
+        if (attempts < maxAttempts) {
+          setTimeout(attemptConnection, 2000);
+        } else {
+          updateConnectionStatus('disconnected', 'Verbinding mislukt');
+          showError('❌ Kan geen verbinding maken na 3 pogingen: ' + error.message);
+        }
+      })
+      .testConnection();
+  }
+  
+  attemptConnection();
+}
+
+// Replace the original testConnection function
+function testConnection() {
+  testConnectionWithRetry();
+}
 function deleteProject(recordId) {
   if (!confirm('🗑️ Weet je zeker dat je dit project wilt verwijderen?')) {
     return;
