@@ -775,9 +775,45 @@ function createInvoice(invoiceData) {
   }
 }
 
+/**
+ * VERBETERDE PDF GENERATIE - FIX VOOR TIMEOUTS EN DRIVE ISSUES
+ */
 function generateInvoicePDF(invoiceData) {
+  let tempDoc = null;
+  
   try {
-    // Calculate totals and process services
+    console.log('=== STARTING PDF GENERATION ===');
+    console.log('Invoice number:', invoiceData.invoiceNumber);
+    
+    // STEP 1: Validate inputs
+    if (!invoiceData || !invoiceData.invoiceNumber) {
+      throw new Error('Invalid invoice data provided');
+    }
+    
+    // STEP 2: Test Drive folder access FIRST
+    let targetFolder;
+    try {
+      targetFolder = DriveApp.getFolderById(DRIVE_FOLDERS.INVOICES);
+      console.log('✅ Drive folder access verified:', targetFolder.getName());
+    } catch (folderError) {
+      console.error('❌ Drive folder access failed:', folderError);
+      
+      // Try to create folder if it doesn't exist
+      try {
+        const folders = DriveApp.getFoldersByName('Facturen');
+        if (folders.hasNext()) {
+          targetFolder = folders.next();
+          console.log('✅ Using existing Facturen folder');
+        } else {
+          targetFolder = DriveApp.createFolder('Facturen');
+          console.log('✅ Created new Facturen folder');
+        }
+      } catch (createError) {
+        throw new Error('Cannot access or create invoice folder: ' + createError.message);
+      }
+    }
+    
+    // STEP 3: Calculate totals (simplified)
     let subtotal = 0;
     let totalVAT = 0;
     const processedServices = [];
@@ -785,24 +821,18 @@ function generateInvoicePDF(invoiceData) {
     invoiceData.services.forEach(service => {
       const lineAmount = service.quantity * service.unitPrice;
       let lineVAT = 0;
-      let vatRate = 0;
       
       if (service.vat !== '0' && service.vat !== 'Vrijgesteld') {
-        vatRate = parseFloat(service.vat.toString().replace('%', '')) / 100;
+        const vatRate = parseFloat(service.vat.toString().replace('%', '')) / 100;
         lineVAT = lineAmount * vatRate;
       }
-      
-      const lineTotal = lineAmount + lineVAT;
       
       processedServices.push({
         description: service.description,
         quantity: service.quantity,
         unitPrice: service.unitPrice,
         vat: service.vat === '0' || service.vat === 'Vrijgesteld' ? 'Vrijgesteld' : service.vat + '%',
-        vatRate: vatRate,
-        amount: lineAmount,
-        vatAmount: lineVAT,
-        total: lineTotal
+        total: lineAmount + lineVAT
       });
       
       subtotal += lineAmount;
@@ -811,194 +841,194 @@ function generateInvoicePDF(invoiceData) {
     
     const grandTotal = subtotal + totalVAT + (invoiceData.discount || 0);
     
-    // Calculate due date (30 days from invoice date)
-    const invoiceDate = parseDate(invoiceData.invoiceDate);
-    const dueDate = new Date(invoiceDate);
-    dueDate.setDate(dueDate.getDate() + 30);
+    // STEP 4: Create document with simplified approach
+    const timestamp = Date.now();
+    const tempDocName = `Invoice_${invoiceData.invoiceNumber}_${timestamp}`;
     
-    // Generate document - SIMPLE LAYOUT MATCHING TEMPLATE
-    const tempDoc = DocumentApp.create(`TEMP_Invoice_${invoiceData.invoiceNumber}_${Date.now()}`);
+    console.log('Creating document:', tempDocName);
+    tempDoc = DocumentApp.create(tempDocName);
+    
+    if (!tempDoc) {
+      throw new Error('Failed to create Google Document');
+    }
+    
     const body = tempDoc.getBody();
     body.clear();
     
-    // === HEADER - EXACT TEMPLATE MATCH ===
-    const companyName = body.appendParagraph('MORE IS MORE!');
-    companyName.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
-    companyName.setFontSize(24);
-    companyName.setFontWeight(true);
+    // STEP 5: Build document content (simplified for speed)
     
-    const agencyLine = body.appendParagraph('Agency');
-    agencyLine.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
-    agencyLine.setFontSize(20);
+    // Header
+    const header = body.appendParagraph('MORE IS MORE! AGENCY');
+    header.setHeading(DocumentApp.ParagraphHeading.HEADING1);
+    header.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
     
     const invoiceTitle = body.appendParagraph('FACTUUR');
+    invoiceTitle.setHeading(DocumentApp.ParagraphHeading.HEADING2);
     invoiceTitle.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
-    invoiceTitle.setFontSize(16);
-    invoiceTitle.setFontWeight(true);
-    invoiceTitle.setSpacingAfter(20);
     
-    // === COMPANY INFO BLOCK ===
-    const companyInfo = body.appendParagraph(
+    // Company info
+    body.appendParagraph(
       `${COMPANY_INFO.address}\n` +
       `${COMPANY_INFO.postalCode} ${COMPANY_INFO.city}, ${COMPANY_INFO.country}\n` +
       `Tel: ${COMPANY_INFO.phone}\n` +
-      `E-mail: ${COMPANY_INFO.email}\n` +
-      `Ondernemingsnummer: ${COMPANY_INFO.vatNumber.replace('BE ', '')}`
+      `Email: ${COMPANY_INFO.email}\n` +
+      `BTW: ${COMPANY_INFO.vatNumber}`
     );
-    companyInfo.setFontSize(10);
-    companyInfo.setSpacingAfter(15);
     
-    // === INVOICE DETAILS - RIGHT ALIGNED ===
-    const invoiceDetails = body.appendParagraph(
-      `Factuurnr: ${invoiceData.invoiceNumber}\n` +
-      `Factuurdatum: ${invoiceData.invoiceDate}\n` +
-      `Vervaldatum: ${formatDate(dueDate)}\n` +
-      `Referentie: ${invoiceData.projectName}`
+    // Invoice details
+    const details = body.appendParagraph(
+      `Factuurnummer: ${invoiceData.invoiceNumber}\n` +
+      `Datum: ${invoiceData.invoiceDate}\n` +
+      `Project: ${invoiceData.projectName}`
     );
-    invoiceDetails.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
-    invoiceDetails.setFontSize(11);
-    invoiceDetails.setSpacingAfter(20);
+    details.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
     
-    // === FACTUURADRES ===
-    const addressHeader = body.appendParagraph('FACTUURADRES');
-    addressHeader.setFontWeight(true);
-    addressHeader.setFontSize(12);
-    
-    const clientAddress = body.appendParagraph(
+    // Client address
+    body.appendParagraph('FACTUURADRES').setFontWeight(true);
+    body.appendParagraph(
       `${invoiceData.clientCompany}\n` +
       `${invoiceData.contactPerson}\n` +
       `${invoiceData.address}\n` +
       `${invoiceData.postalCode || ''} ${invoiceData.city}\n` +
-      `${invoiceData.country || 'België'}\n` +
       `BTW: ${invoiceData.vatNumber || 'n.v.t.'}`
     );
-    clientAddress.setFontSize(11);
-    clientAddress.setSpacingAfter(20);
     
-    // === PROJECT DETAILS ===
-    const projectHeader = body.appendParagraph('PROJECT DETAILS');
-    projectHeader.setFontWeight(true);
-    projectHeader.setFontSize(12);
+    // Services (simplified table)
+    body.appendParagraph('DIENSTEN').setFontWeight(true);
     
-    const projectDetails = body.appendParagraph(
-      `Project: ${invoiceData.projectName}\n` +
-      `Periode: ${invoiceData.projectPeriod}\n` +
-      `Account manager: ${invoiceData.accountManager}`
-    );
-    projectDetails.setFontSize(11);
-    projectDetails.setSpacingAfter(20);
-    
-    // === SERVICES TABLE ===
-    const servicesHeader = body.appendParagraph('GELEVERDE DIENSTEN');
-    servicesHeader.setFontWeight(true);
-    servicesHeader.setFontSize(12);
-    
-    const table = body.appendTable();
-    
-    // Table header
-    const headerRow = table.appendTableRow();
-    headerRow.appendTableCell('Omschrijving').setFontWeight(true);
-    headerRow.appendTableCell('Aantal').setFontWeight(true);
-    headerRow.appendTableCell('Eenheidsprijs').setFontWeight(true);
-    headerRow.appendTableCell('BTW').setFontWeight(true);
-    headerRow.appendTableCell('Bedrag').setFontWeight(true);
-    
-    // Services rows
-    processedServices.forEach(service => {
-      const row = table.appendTableRow();
-      row.appendTableCell(service.description);
-      row.appendTableCell(service.quantity.toString());
-      row.appendTableCell(`€${service.unitPrice.toFixed(2)}`);
-      row.appendTableCell(service.vat);
-      row.appendTableCell(`€${service.total.toFixed(2)}`);
+    processedServices.forEach((service, index) => {
+      body.appendParagraph(
+        `${index + 1}. ${service.description} - ${service.quantity}x €${service.unitPrice.toFixed(2)} (BTW: ${service.vat}) = €${service.total.toFixed(2)}`
+      );
     });
     
-    body.appendParagraph('').setSpacingAfter(10);
+    // Totals
+    body.appendParagraph('\n');
+    const totalsText = body.appendParagraph(
+      `Subtotaal: €${subtotal.toFixed(2)}\n` +
+      `BTW: €${totalVAT.toFixed(2)}\n` +
+      `TOTAAL: €${grandTotal.toFixed(2)}`
+    );
+    totalsText.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+    totalsText.setFontWeight(true);
     
-    // === TOTALS - SIMPLE RIGHT ALIGNED ===
-    const subtotalLine = body.appendParagraph(`Subtotaal €${subtotal.toFixed(2)}`);
-    subtotalLine.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
-    subtotalLine.setFontSize(11);
-    
-    if (invoiceData.discount && invoiceData.discount !== 0) {
-      const discountLine = body.appendParagraph(`Korting/toeslag (optioneel) ${invoiceData.discount.toFixed(2)}`);
-      discountLine.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
-      discountLine.setFontSize(11);
-    }
-    
-    const totalLine = body.appendParagraph(`TOTAAL TE BETALEN €${grandTotal.toFixed(2)}`);
-    totalLine.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
-    totalLine.setFontSize(12);
-    totalLine.setFontWeight(true);
-    totalLine.setSpacingAfter(20);
-    
-    // === BETALINGSGEGEVENS ===
-    const paymentHeader = body.appendParagraph('BETALINGSGEGEVENS');
-    paymentHeader.setFontWeight(true);
-    paymentHeader.setFontSize(12);
-    
-    const paymentDetails = body.appendParagraph(
-      `Bank: Triodos Bank\n` +
-      `Rekeninghouder: ${COMPANY_INFO.name}\n` +
+    // Payment info
+    body.appendParagraph('\nBETALINGSGEGEVENS').setFontWeight(true);
+    body.appendParagraph(
       `IBAN: ${COMPANY_INFO.iban}\n` +
       `BIC: ${COMPANY_INFO.bic}\n` +
-      `Mededeling: ${invoiceData.invoiceNumber}\n` +
-      `Vervaldatum: ${formatDate(dueDate)}`
+      `Mededeling: ${invoiceData.invoiceNumber}`
     );
-    paymentDetails.setFontSize(10);
-    paymentDetails.setSpacingAfter(20);
     
-    // === ALGEMENE VOORWAARDEN ===
-    const termsHeader = body.appendParagraph('ALGEMENE VOORWAARDEN');
-    termsHeader.setFontWeight(true);
-    termsHeader.setFontSize(11);
+    console.log('✅ Document content created');
     
-    const terms = body.appendParagraph(
-      '1. Deze factuur is betaalbaar binnen 30 dagen na factuurdatum.\n' +
-      '2. Bij niet-betaling op de vervaldag is van rechtswege en zonder ingebrekestelling een intrest verschuldigd van 10% per jaar.\n' +
-      '3. Bovendien is bij gehele of gedeeltelijke niet-betaling van de schuld op de vervaldag van rechtswege en zonder ingebrekestelling een forfaitaire vergoeding verschuldigd van 10% op het factuurbedrag, met een minimum van € 75,00.\n' +
-      '4. Alle geschillen vallen onder de exclusieve bevoegdheid van de rechtbanken van Brussel.'
-    );
-    terms.setFontSize(9);
-    terms.setSpacingAfter(15);
-    
-    // === FOOTER ===
-    const footer = body.appendParagraph(`${COMPANY_INFO.name} VZW | ${COMPANY_INFO.address}, ${COMPANY_INFO.postalCode} ${COMPANY_INFO.city} | ${COMPANY_INFO.vatNumber} | RPR Brussel`);
-    footer.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
-    footer.setFontSize(8);
-    
-    // CRITICAL: Save and close for PDF conversion
+    // STEP 6: Save document and wait
     tempDoc.saveAndClose();
+    console.log('✅ Document saved and closed');
     
-    // Wait to ensure document is fully saved
-    Utilities.sleep(3000);
+    // CRITICAL: Wait longer for document to be ready
+    Utilities.sleep(5000);
     
-    // Convert to PDF
-    const pdfBlob = tempDoc.getAs('application/pdf');
+    // STEP 7: Convert to PDF with error handling
+    let pdfBlob;
+    try {
+      pdfBlob = tempDoc.getAs('application/pdf');
+      console.log('✅ PDF blob created, size:', pdfBlob.getBytes().length);
+    } catch (pdfError) {
+      console.error('❌ PDF conversion failed:', pdfError);
+      throw new Error('PDF conversion failed: ' + pdfError.message);
+    }
+    
+    // STEP 8: Save to Drive with systematic naming
     const fileName = `Factuur_${invoiceData.invoiceNumber}.pdf`;
     
-    // Save in correct folder
-    const folder = DriveApp.getFolderById(DRIVE_FOLDERS.INVOICES);
-    const file = folder.createFile(pdfBlob);
-    file.setName(fileName);
-    
-    // Set permissions
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    
-    // Clean up temporary document
-    DriveApp.getFileById(tempDoc.getId()).setTrashed(true);
-    
-    return {
-      success: true,
-      fileId: file.getId(),
-      fileName: fileName,
-      downloadUrl: `https://drive.google.com/file/d/${file.getId()}/view`,
-      directDownloadUrl: `https://drive.google.com/uc?export=download&id=${file.getId()}`
-    };
+    try {
+      const file = targetFolder.createFile(pdfBlob);
+      file.setName(fileName);
+      
+      // Set sharing permissions
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      
+      console.log('✅ PDF saved successfully:', fileName);
+      
+      // Clean up temporary document
+      try {
+        DriveApp.getFileById(tempDoc.getId()).setTrashed(true);
+        console.log('✅ Temporary document cleaned up');
+      } catch (cleanupError) {
+        console.warn('⚠️ Could not clean up temp document:', cleanupError);
+      }
+      
+      return {
+        success: true,
+        fileId: file.getId(),
+        fileName: fileName,
+        downloadUrl: `https://drive.google.com/file/d/${file.getId()}/view`,
+        directDownloadUrl: `https://drive.google.com/uc?export=download&id=${file.getId()}`,
+        folderId: targetFolder.getId(),
+        folderName: targetFolder.getName()
+      };
+      
+    } catch (saveError) {
+      console.error('❌ Failed to save PDF to Drive:', saveError);
+      throw new Error('Failed to save PDF to Drive: ' + saveError.message);
+    }
     
   } catch (error) {
-    console.error('PDF generation error:', error);
-    return ErrorHandler.handle(error, { function: 'generateInvoicePDF' });
+    console.error('=== PDF GENERATION FAILED ===');
+    console.error('Error details:', error);
+    
+    // Clean up on error
+    if (tempDoc) {
+      try {
+        DriveApp.getFileById(tempDoc.getId()).setTrashed(true);
+        console.log('✅ Cleaned up temp document after error');
+      } catch (cleanupError) {
+        console.warn('⚠️ Could not clean up temp document after error');
+      }
+    }
+    
+    return {
+      success: false,
+      error: error.message || 'Unknown PDF generation error',
+      details: error.toString()
+    };
+  }
+}
+
+/**
+ * SIMPLIFIED PROJECT CREATION - FIX FOR 502 ERRORS
+ */
+function createProject(projectData) {
+  try {
+    console.log('=== CREATING PROJECT ===');
+    console.log('Project data:', projectData);
+    
+    // Enhanced validation
+    if (!projectData || !projectData.Naam || !projectData.Type) {
+      throw new Error('VALIDATION_ERROR: Project name and type are required');
+    }
+    
+    // Sanitize data
+    const record = {
+      Naam: String(projectData.Naam).trim(),
+      Type: String(projectData.Type).trim(),
+      Beschrijving: projectData.Beschrijving ? String(projectData.Beschrijving).trim() : '',
+      Aangemaakt: new Date().toISOString().split('T')[0]
+    };
+    
+    console.log('Sanitized record:', record);
+    
+    // Use improved Airtable service
+    const airtable = new AirtableService();
+    const result = airtable.createRecord('Projecten', record, { typecast: true });
+    
+    console.log('Project creation result:', result);
+    return result;
+    
+  } catch (error) {
+    console.error('Project creation error:', error);
+    return ErrorHandler.handle(error, { function: 'createProject', projectData });
   }
 }
 
