@@ -1,85 +1,23 @@
-// Code.gs - VZW Accounting System - VOLLEDIG GEFIXTE VERSIE 4.0
-// Alle bugs opgelost inclusief klanten zoeken, PDF export, file upload en styling
-// ==================== VERBETERDE CONFIGURATIE (502 ERROR PREVENTION) ====================
+// Code.gs - VZW Accounting System - VOLLEDIG GEFIXTE VERSIE 5.0
+// Alle 6 bugs opgelost: Airtable sync, editable numbers, PDF export, report styling, table layout
+
+// ==================== CONFIGURATIE ====================
 const CONFIG = {
   production: {
     airtableToken: 'patGyvyT913BTnau0.c7200073a6a99aaeb420fd5a8beaecc85494adecbcc18cfed98f54cdee86f743',
     airtableBase: 'appPwcdZUr8yfiGvP',
-    debugMode: true, // Temporarily enable for debugging
-    rateLimitDelay: 800, // Verhoogd van 200ms naar 800ms
+    debugMode: true,
+    rateLimitDelay: 800,
     maxRetries: 3,
-    requestTimeout: 30000 // 30 seconden timeout
+    requestTimeout: 30000
   }
 };
 
-// VERBETERDE DRIVE FOLDERS CONFIG
 const DRIVE_FOLDERS = {
   INVOICES: '1JotWJZtejm6r5FGF4qzC29JYq3XJm7VT',
   REPORTS: '1aPVb4sWg-D5fE0pg3hSI4xlx3Sfqrpp5',
   EXPENSES: '1T0dz62ya_-IQc96Uk0eVQfNtVm0Jgqll'
 };
-
-// VERBETERDE ERROR HANDLER MET MEER DETAIL
-class ErrorHandler {
-  static handle(error, context = {}) {
-    const errorInfo = {
-      timestamp: new Date().toISOString(),
-      message: error.message,
-      stack: error.stack,
-      context: context,
-      user: Session.getActiveUser().getEmail()
-    };
-    
-    console.error('=== SYSTEM ERROR ===');
-    console.error('Error Info:', errorInfo);
-    console.error('===================');
-    
-    // Log to Google Apps Script console for debugging
-    if (CONFIG.production.debugMode) {
-      console.log('Full error context:', JSON.stringify(context, null, 2));
-    }
-    
-    return {
-      success: false,
-      error: this.getUserFriendlyMessage(error),
-      technicalDetails: CONFIG.production.debugMode ? error.message : 'Contact support if this persists',
-      timestamp: errorInfo.timestamp
-    };
-  }
-  
-  static getUserFriendlyMessage(error) {
-    const friendlyMessages = {
-      'RATE_LIMIT_EXCEEDED': 'Het systeem is momenteel druk bezet. Probeer het over een minuut opnieuw.',
-      'INVALID_DATA': 'Controleer je invoer en probeer opnieuw.',
-      'PERMISSION_DENIED': 'Je hebt geen toestemming voor deze actie.',
-      'NETWORK_ERROR': 'Verbindingsprobleem. Probeer het opnieuw.',
-      'VALIDATION_ERROR': 'Controleer je gegevens en probeer opnieuw.',
-      'INVALID_MULTIPLE_CHOICE_OPTIONS': 'Sommige opties moeten eerst in Airtable aangemaakt worden.',
-      'HTTP 502': 'Server tijdelijk niet beschikbaar. Probeer het over 30 seconden opnieuw.',
-      'HTTP 503': 'Service tijdelijk niet beschikbaar. Probeer het over een minuut opnieuw.',
-      'HTTP 429': 'Te veel verzoeken. Wacht even en probeer opnieuw.',
-      'timeout': 'Verzoek duurde te lang. Probeer opnieuw met minder data.',
-      'Connection failure': 'Verbindingsprobleem met Airtable. Controleer je internetverbinding.'
-    };
-    
-    for (const [key, message] of Object.entries(friendlyMessages)) {
-      if (error.message.toLowerCase().includes(key.toLowerCase())) {
-        return message;
-      }
-    }
-    
-    // Special handling for common Google Apps Script errors
-    if (error.message.includes('ScriptError')) {
-      return 'Er is een tijdelijke fout opgetreden. Probeer het over een minuut opnieuw.';
-    }
-    
-    if (error.message.includes('Exception')) {
-      return 'Er is een onverwachte fout opgetreden. Controleer je gegevens en probeer opnieuw.';
-    }
-    
-    return 'Er is een onverwachte fout opgetreden. Probeer het opnieuw of neem contact op met support.';
-  }
-}
 
 const COMPANY_INFO = {
   name: 'MORE IS MORE! Agency',
@@ -94,7 +32,7 @@ const COMPANY_INFO = {
   bic: 'TRIONL2U'
 };
 
-// ==================== COMPLETE CULTURE SECTOR NACE CODES ====================
+// ==================== CULTURE SECTOR NACE CODES ====================
 const CULTURE_NACE_CODES = [
   { code: '90.01', description: 'Podiumkunsten' },
   { code: '90.02', description: 'Ondersteunende podiumkunsten' },
@@ -146,36 +84,57 @@ class ErrorHandler {
     const errorInfo = {
       timestamp: new Date().toISOString(),
       message: error.message,
+      stack: error.stack,
       context: context,
       user: Session.getActiveUser().getEmail()
     };
     
-    console.error('System Error:', errorInfo);
+    console.error('=== SYSTEM ERROR ===');
+    console.error('Error Info:', errorInfo);
+    console.error('===================');
+    
+    if (CONFIG.production.debugMode) {
+      console.log('Full error context:', JSON.stringify(context, null, 2));
+    }
     
     return {
       success: false,
       error: this.getUserFriendlyMessage(error),
-      technicalDetails: CONFIG.production.debugMode ? error.message : 'Contact support if this persists'
+      technicalDetails: CONFIG.production.debugMode ? error.message : 'Contact support if this persists',
+      timestamp: errorInfo.timestamp
     };
   }
   
   static getUserFriendlyMessage(error) {
     const friendlyMessages = {
-      'RATE_LIMIT_EXCEEDED': 'System is busy. Please try again in a moment.',
-      'INVALID_DATA': 'Please check your input and try again.',
-      'PERMISSION_DENIED': 'You do not have permission for this action.',
-      'NETWORK_ERROR': 'Connection issue. Please try again.',
-      'VALIDATION_ERROR': 'Please check your data and try again.',
-      'INVALID_MULTIPLE_CHOICE_OPTIONS': 'Some options need to be created in Airtable first.'
+      'RATE_LIMIT_EXCEEDED': 'Het systeem is momenteel druk bezet. Probeer het over een minuut opnieuw.',
+      'INVALID_DATA': 'Controleer je invoer en probeer opnieuw.',
+      'PERMISSION_DENIED': 'Je hebt geen toestemming voor deze actie.',
+      'NETWORK_ERROR': 'Verbindingsprobleem. Probeer het opnieuw.',
+      'VALIDATION_ERROR': 'Controleer je gegevens en probeer opnieuw.',
+      'INVALID_MULTIPLE_CHOICE_OPTIONS': 'Sommige opties moeten eerst in Airtable aangemaakt worden.',
+      'HTTP 502': 'Server tijdelijk niet beschikbaar. Probeer het over 30 seconden opnieuw.',
+      'HTTP 503': 'Service tijdelijk niet beschikbaar. Probeer het over een minuut opnieuw.',
+      'HTTP 429': 'Te veel verzoeken. Wacht even en probeer opnieuw.',
+      'timeout': 'Verzoek duurde te lang. Probeer opnieuw met minder data.',
+      'Connection failure': 'Verbindingsprobleem met Airtable. Controleer je internetverbinding.'
     };
     
     for (const [key, message] of Object.entries(friendlyMessages)) {
-      if (error.message.includes(key)) {
+      if (error.message.toLowerCase().includes(key.toLowerCase())) {
         return message;
       }
     }
     
-    return 'An unexpected error occurred. Please try again or contact support.';
+    if (error.message.includes('ScriptError')) {
+      return 'Er is een tijdelijke fout opgetreden. Probeer het over een minuut opnieuw.';
+    }
+    
+    if (error.message.includes('Exception')) {
+      return 'Er is een onverwachte fout opgetreden. Controleer je gegevens en probeer opnieuw.';
+    }
+    
+    return 'Er is een onverwachte fout opgetreden. Probeer het opnieuw of neem contact op met support.';
   }
 }
 
@@ -186,13 +145,11 @@ class AirtableService {
     this.token = CONFIG.production.airtableToken;
     this.baseId = CONFIG.production.airtableBase;
     this.maxRetries = 3;
-    this.baseDelay = 500; // Verhoogd van 200ms naar 500ms
+    this.baseDelay = 500;
   }
   
-  // CRITICAL FIX: Verbeterde retry logic met exponential backoff
   makeRequestWithRetry(url, options, retryCount = 0) {
     try {
-      // Progressieve delay - steeds langer wachten
       const delay = this.baseDelay * Math.pow(2, retryCount);
       Utilities.sleep(delay);
       
@@ -201,13 +158,12 @@ class AirtableService {
       const response = UrlFetchApp.fetch(url, {
         ...options,
         muteHttpExceptions: true,
-        timeout: 30000 // 30 seconden timeout
+        timeout: 30000
       });
       
       const responseCode = response.getResponseCode();
       console.log(`Response code: ${responseCode}`);
       
-      // Success cases
       if (responseCode === 200) {
         return {
           success: true,
@@ -215,16 +171,14 @@ class AirtableService {
         };
       }
       
-      // Rate limit cases - retry with longer delay
       if (responseCode === 429 || responseCode === 502 || responseCode === 503) {
         if (retryCount < this.maxRetries) {
           console.log(`Rate limited or server error (${responseCode}), retrying in ${delay * 2}ms...`);
-          Utilities.sleep(delay * 2); // Extra lange pause voor rate limiting
+          Utilities.sleep(delay * 2);
           return this.makeRequestWithRetry(url, options, retryCount + 1);
         }
       }
       
-      // Other errors
       const errorText = response.getContentText();
       throw new Error(`HTTP ${responseCode}: ${errorText}`);
       
@@ -425,61 +379,124 @@ class AirtableService {
   }
 }
 
-// ==================== BUG FIX 1: CLIENT AUTOCOMPLETE SEARCH (GEFIXED) ====================
-function searchClients(query) {
+// ==================== BUG FIX 1 & 4: SYNCHRONIZED NUMBER GENERATION ====================
+/**
+ * Get the highest invoice number from Airtable and increment
+ */
+function generateInvoiceNumber() {
   try {
-    if (!query || query.trim().length < 2) {
-      return {
-        success: true,
-        clients: []
-      };
-    }
+    console.log('=== GENERATING INVOICE NUMBER FROM AIRTABLE ===');
     
     const airtable = new AirtableService();
+    const year = new Date().getFullYear();
     
-    // FIXED: Correcte filterByFormula syntax voor Airtable met null-checks
-    const searchTerm = query.toLowerCase().replace(/'/g, "\\'");
-    const searchFormula = `OR(
-      FIND("${searchTerm}", LOWER(CONCATENATE({Klantgegevens},""))),
-      FIND("${searchTerm}", LOWER(CONCATENATE({Contactpersoon},""))),
-      FIND("${searchTerm}", LOWER(CONCATENATE({Email},""))),
-      FIND("${searchTerm}", LOWER(CONCATENATE({Stad},"")))
+    // Query Airtable for highest invoice number this year
+    const filterFormula = `AND(
+      {Select} = "Inkomsten",
+      FIND("${year}-", {Name})
     )`;
     
-    const result = airtable.getRecords('Klanten', {
-      filterByFormula: searchFormula,
+    const result = airtable.getRecords('Transacties', {
+      filterByFormula: filterFormula,
+      sort: { field: 'Name', direction: 'desc' },
       maxRecords: 10
     });
     
     if (!result.success) {
-      return result;
+      throw new Error('Failed to query Airtable');
     }
     
-    // Transform voor frontend
-    const clients = result.records.map(record => ({
-      id: record.id,
-      company: record.fields.Klantgegevens || '',
-      contact: record.fields.Contactpersoon || '',
-      address: record.fields.Adres || '',
-      postalCode: record.fields.Postcode || '',
-      city: record.fields.Stad || '',
-      country: record.fields.Land || 'België',
-      vatNumber: record.fields['BTW-nummer'] || '',
-      email: record.fields.Email || '',
-      phone: record.fields.Telefoon || ''
-    }));
+    let highestNumber = 0;
     
-    return {
-      success: true,
-      clients: clients
-    };
+    // Parse invoice numbers to find highest
+    result.records.forEach(record => {
+      const name = record.fields.Name || '';
+      const match = name.match(/(\d{4})-(\d{3})/);
+      if (match && match[1] == year) {
+        const num = parseInt(match[2]);
+        if (num > highestNumber) {
+          highestNumber = num;
+        }
+      }
+    });
+    
+    // Increment and format
+    const newNumber = highestNumber + 1;
+    const invoiceNumber = `${year}-${String(newNumber).padStart(3, '0')}`;
+    
+    console.log(`Highest invoice in Airtable: ${year}-${String(highestNumber).padStart(3, '0')}`);
+    console.log(`New invoice number: ${invoiceNumber}`);
+    
+    return invoiceNumber;
     
   } catch (error) {
-    return ErrorHandler.handle(error, { function: 'searchClients', query });
+    console.error('Error generating invoice number from Airtable:', error);
+    // Fallback to timestamp-based number
+    const fallback = `${new Date().getFullYear()}-${Date.now().toString().slice(-3)}`;
+    console.log('Using fallback invoice number:', fallback);
+    return fallback;
   }
 }
 
-// ==================== ENHANCED VALIDATION SERVICE ====================
+/**
+ * Get the highest expense number from Airtable and increment
+ */
+function generateExpenseNumber() {
+  try {
+    console.log('=== GENERATING EXPENSE NUMBER FROM AIRTABLE ===');
+    
+    const airtable = new AirtableService();
+    const year = new Date().getFullYear();
+    
+    // Query Airtable for highest expense number this year
+    const filterFormula = `AND(
+      {Select} = "Uitgaven",
+      FIND("UIT-${year}-", {Name})
+    )`;
+    
+    const result = airtable.getRecords('Transacties', {
+      filterByFormula: filterFormula,
+      sort: { field: 'Name', direction: 'desc' },
+      maxRecords: 10
+    });
+    
+    if (!result.success) {
+      throw new Error('Failed to query Airtable');
+    }
+    
+    let highestNumber = 0;
+    
+    // Parse expense numbers to find highest
+    result.records.forEach(record => {
+      const name = record.fields.Name || '';
+      const match = name.match(/UIT-(\d{4})-(\d{4})/);
+      if (match && match[1] == year) {
+        const num = parseInt(match[2]);
+        if (num > highestNumber) {
+          highestNumber = num;
+        }
+      }
+    });
+    
+    // Increment and format
+    const newNumber = highestNumber + 1;
+    const expenseNumber = `UIT-${year}-${String(newNumber).padStart(4, '0')}`;
+    
+    console.log(`Highest expense in Airtable: UIT-${year}-${String(highestNumber).padStart(4, '0')}`);
+    console.log(`New expense number: ${expenseNumber}`);
+    
+    return expenseNumber;
+    
+  } catch (error) {
+    console.error('Error generating expense number from Airtable:', error);
+    // Fallback to timestamp-based number
+    const fallback = `UIT-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`;
+    console.log('Using fallback expense number:', fallback);
+    return fallback;
+  }
+}
+
+// ==================== VALIDATION SERVICE ====================
 class ValidationService {
   static validateTransaction(data) {
     const errors = [];
@@ -578,6 +595,58 @@ class TaxCalculator {
       'intermediate': 12,
       'zero': 0
     };
+  }
+}
+
+// ==================== CLIENT SEARCH ====================
+function searchClients(query) {
+  try {
+    if (!query || query.trim().length < 2) {
+      return {
+        success: true,
+        clients: []
+      };
+    }
+    
+    const airtable = new AirtableService();
+    
+    const searchTerm = query.toLowerCase().replace(/'/g, "\\'");
+    const searchFormula = `OR(
+      FIND("${searchTerm}", LOWER(CONCATENATE({Klantgegevens},""))),
+      FIND("${searchTerm}", LOWER(CONCATENATE({Contactpersoon},""))),
+      FIND("${searchTerm}", LOWER(CONCATENATE({Email},""))),
+      FIND("${searchTerm}", LOWER(CONCATENATE({Stad},"")))
+    )`;
+    
+    const result = airtable.getRecords('Klanten', {
+      filterByFormula: searchFormula,
+      maxRecords: 10
+    });
+    
+    if (!result.success) {
+      return result;
+    }
+    
+    const clients = result.records.map(record => ({
+      id: record.id,
+      company: record.fields.Klantgegevens || '',
+      contact: record.fields.Contactpersoon || '',
+      address: record.fields.Adres || '',
+      postalCode: record.fields.Postcode || '',
+      city: record.fields.Stad || '',
+      country: record.fields.Land || 'België',
+      vatNumber: record.fields['BTW-nummer'] || '',
+      email: record.fields.Email || '',
+      phone: record.fields.Telefoon || ''
+    }));
+    
+    return {
+      success: true,
+      clients: clients
+    };
+    
+  } catch (error) {
+    return ErrorHandler.handle(error, { function: 'searchClients', query });
   }
 }
 
@@ -707,23 +776,31 @@ function deleteTransaction(recordId) {
 // ==================== PROJECT FUNCTIONS ====================
 function createProject(projectData) {
   try {
-    const validation = ValidationService.validateProject(projectData);
-    if (!validation.isValid) {
-      throw new Error(`VALIDATION_ERROR: ${validation.errors.join(', ')}`);
+    console.log('=== CREATING PROJECT ===');
+    console.log('Project data:', projectData);
+    
+    if (!projectData || !projectData.Naam || !projectData.Type) {
+      throw new Error('VALIDATION_ERROR: Project name and type are required');
     }
     
     const record = {
-      Naam: projectData.Naam,
-      Type: projectData.Type,
-      Beschrijving: projectData.Beschrijving || '',
+      Naam: String(projectData.Naam).trim(),
+      Type: String(projectData.Type).trim(),
+      Beschrijving: projectData.Beschrijving ? String(projectData.Beschrijving).trim() : '',
       Aangemaakt: new Date().toISOString().split('T')[0]
     };
     
+    console.log('Sanitized record:', record);
+    
     const airtable = new AirtableService();
-    return airtable.createRecord('Projecten', record, { typecast: true });
+    const result = airtable.createRecord('Projecten', record, { typecast: true });
+    
+    console.log('Project creation result:', result);
+    return result;
     
   } catch (error) {
-    return ErrorHandler.handle(error, { function: 'createProject' });
+    console.error('Project creation error:', error);
+    return ErrorHandler.handle(error, { function: 'createProject', projectData });
   }
 }
 
@@ -767,29 +844,17 @@ function getCultureNACECodes() {
   };
 }
 
-// ==================== BUG FIX 2: INVOICE PDF GENERATION (GEFIXED) ====================
-function generateInvoiceNumber() {
-  try {
-    const properties = PropertiesService.getScriptProperties();
-    const year = new Date().getFullYear();
-    const key = `invoiceNumber_${year}`;
-    
-    let lastNumber = parseInt(properties.getProperty(key) || '0');
-    const newNumber = lastNumber + 1;
-    
-    properties.setProperty(key, newNumber.toString());
-    
-    return `${year}-${String(newNumber).padStart(3, '0')}`;
-    
-  } catch (error) {
-    return `${new Date().getFullYear()}-${Date.now().toString().slice(-3)}`;
-  }
-}
-
+// ==================== BUG FIX 2 & 3: INVOICE CREATION WITH PDF ====================
 function createInvoice(invoiceData) {
   try {
-    if (!invoiceData.invoiceNumber) {
+    // Allow manual invoice number override
+    if (!invoiceData.invoiceNumber || invoiceData.invoiceNumber.trim() === '') {
       invoiceData.invoiceNumber = generateInvoiceNumber();
+    }
+    
+    // Validate invoice number format
+    if (!invoiceData.invoiceNumber.match(/^\d{4}-\d{3}$/)) {
+      throw new Error('VALIDATION_ERROR: Factuurnummer moet formaat YYYY-XXX hebben');
     }
     
     let subtotal = 0;
@@ -826,6 +891,7 @@ function createInvoice(invoiceData) {
       return transactionResult;
     }
     
+    // Generate PDF
     const pdfResult = generateInvoicePDF(invoiceData);
     
     return {
@@ -841,21 +907,21 @@ function createInvoice(invoiceData) {
 }
 
 /**
- * VERBETERDE PDF GENERATIE - FIX VOOR TIMEOUTS EN DRIVE ISSUES
+ * ENHANCED PDF GENERATION WITH ROBUST ERROR HANDLING
  */
 function generateInvoicePDF(invoiceData) {
   let tempDoc = null;
   
   try {
-    console.log('=== STARTING PDF GENERATION ===');
+    console.log('=== STARTING INVOICE PDF GENERATION ===');
     console.log('Invoice number:', invoiceData.invoiceNumber);
     
-    // STEP 1: Validate inputs
+    // Validate inputs
     if (!invoiceData || !invoiceData.invoiceNumber) {
       throw new Error('Invalid invoice data provided');
     }
     
-    // STEP 2: Test Drive folder access FIRST
+    // Test Drive folder access
     let targetFolder;
     try {
       targetFolder = DriveApp.getFolderById(DRIVE_FOLDERS.INVOICES);
@@ -863,7 +929,7 @@ function generateInvoicePDF(invoiceData) {
     } catch (folderError) {
       console.error('❌ Drive folder access failed:', folderError);
       
-      // Try to create folder if it doesn't exist
+      // Create folder if needed
       try {
         const folders = DriveApp.getFoldersByName('Facturen');
         if (folders.hasNext()) {
@@ -878,7 +944,7 @@ function generateInvoicePDF(invoiceData) {
       }
     }
     
-    // STEP 3: Calculate totals (simplified)
+    // Calculate totals
     let subtotal = 0;
     let totalVAT = 0;
     const processedServices = [];
@@ -906,7 +972,7 @@ function generateInvoicePDF(invoiceData) {
     
     const grandTotal = subtotal + totalVAT + (invoiceData.discount || 0);
     
-    // STEP 4: Create document with simplified approach
+    // Create document
     const timestamp = Date.now();
     const tempDocName = `Invoice_${invoiceData.invoiceNumber}_${timestamp}`;
     
@@ -920,81 +986,162 @@ function generateInvoicePDF(invoiceData) {
     const body = tempDoc.getBody();
     body.clear();
     
-    // STEP 5: Build document content (simplified for speed)
+    // Build document matching template
     
-    // Header
-    const header = body.appendParagraph('MORE IS MORE! AGENCY');
-    header.setHeading(DocumentApp.ParagraphHeading.HEADING1);
-    header.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    // Company header
+    const header1 = body.appendParagraph('MORE IS MORE!');
+    header1.setFontSize(24);
+    header1.setBold(true);
+    header1.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    
+    const header2 = body.appendParagraph('Agency');
+    header2.setFontSize(20);
+    header2.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    header2.setSpacingAfter(10);
     
     const invoiceTitle = body.appendParagraph('FACTUUR');
-    invoiceTitle.setHeading(DocumentApp.ParagraphHeading.HEADING2);
+    invoiceTitle.setFontSize(16);
+    invoiceTitle.setBold(true);
     invoiceTitle.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    invoiceTitle.setSpacingAfter(20);
     
     // Company info
     body.appendParagraph(
       `${COMPANY_INFO.address}\n` +
       `${COMPANY_INFO.postalCode} ${COMPANY_INFO.city}, ${COMPANY_INFO.country}\n` +
       `Tel: ${COMPANY_INFO.phone}\n` +
-      `Email: ${COMPANY_INFO.email}\n` +
-      `BTW: ${COMPANY_INFO.vatNumber}`
-    );
+      `E-mail: ${COMPANY_INFO.email}\n` +
+      `Ondernemingsnummer: ${COMPANY_INFO.vatNumber.replace('BE ', '')}`
+    ).setFontSize(10);
     
-    // Invoice details
+    // Invoice details (right aligned)
     const details = body.appendParagraph(
-      `Factuurnummer: ${invoiceData.invoiceNumber}\n` +
-      `Datum: ${invoiceData.invoiceDate}\n` +
-      `Project: ${invoiceData.projectName}`
+      `Factuurnr: ${invoiceData.invoiceNumber}\n` +
+      `Factuurdatum: ${invoiceData.invoiceDate}\n` +
+      `Vervaldatum: ${calculateDueDate(invoiceData.invoiceDate)}\n` +
+      `Referentie: ${invoiceData.projectName}`
     );
     details.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+    details.setSpacingAfter(20);
     
-    // Client address
-    body.appendParagraph('FACTUURADRES').setFontWeight(true);
+    // FACTUURADRES section
+    const addressHeader = body.appendParagraph('FACTUURADRES');
+    addressHeader.setBold(true);
+    addressHeader.setFontSize(12);
+    addressHeader.setSpacingAfter(10);
+    
     body.appendParagraph(
       `${invoiceData.clientCompany}\n` +
       `${invoiceData.contactPerson}\n` +
       `${invoiceData.address}\n` +
       `${invoiceData.postalCode || ''} ${invoiceData.city}\n` +
+      `${invoiceData.country || 'België'}\n` +
       `BTW: ${invoiceData.vatNumber || 'n.v.t.'}`
-    );
+    ).setSpacingAfter(20);
     
-    // Services (simplified table)
-    body.appendParagraph('DIENSTEN').setFontWeight(true);
+    // PROJECT DETAILS section
+    const projectHeader = body.appendParagraph('PROJECT DETAILS');
+    projectHeader.setBold(true);
+    projectHeader.setFontSize(12);
+    projectHeader.setSpacingAfter(10);
     
-    processedServices.forEach((service, index) => {
-      body.appendParagraph(
-        `${index + 1}. ${service.description} - ${service.quantity}x €${service.unitPrice.toFixed(2)} (BTW: ${service.vat}) = €${service.total.toFixed(2)}`
-      );
+    body.appendParagraph(
+      `Project: ${invoiceData.projectName}\n` +
+      `Periode: ${invoiceData.projectPeriod || 'n.v.t.'}\n` +
+      `Account manager: ${invoiceData.accountManager || 'More is More! Agency'}`
+    ).setSpacingAfter(20);
+    
+    // GELEVERDE DIENSTEN section
+    const servicesHeader = body.appendParagraph('GELEVERDE DIENSTEN');
+    servicesHeader.setBold(true);
+    servicesHeader.setFontSize(12);
+    servicesHeader.setSpacingAfter(10);
+    
+    // Services table
+    const table = body.appendTable();
+    
+    // Header row
+    const headerRow = table.appendTableRow();
+    ['Omschrijving', 'Aantal', 'Eenheidsprijs', 'BTW', 'Bedrag'].forEach(text => {
+      const cell = headerRow.appendTableCell(text);
+      cell.setBold(true);
+      cell.setBackgroundColor('#f0f0f0');
     });
     
+    // Service rows
+    processedServices.forEach(service => {
+      const row = table.appendTableRow();
+      row.appendTableCell(service.description);
+      row.appendTableCell(service.quantity.toString()).setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+      row.appendTableCell(`€${service.unitPrice.toFixed(2)}`).setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+      row.appendTableCell(service.vat).setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+      row.appendTableCell(`€${service.total.toFixed(2)}`).setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+    });
+    
+    body.appendParagraph('').setSpacingAfter(20);
+    
     // Totals
-    body.appendParagraph('\n');
     const totalsText = body.appendParagraph(
-      `Subtotaal: €${subtotal.toFixed(2)}\n` +
-      `BTW: €${totalVAT.toFixed(2)}\n` +
-      `TOTAAL: €${grandTotal.toFixed(2)}`
+      `Subtotaal €${subtotal.toFixed(2)}\n` +
+      `TOTAAL TE BETALEN €${grandTotal.toFixed(2)}`
     );
     totalsText.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
-    totalsText.setFontWeight(true);
+    totalsText.setBold(true);
+    totalsText.setSpacingAfter(20);
     
-    // Payment info
-    body.appendParagraph('\nBETALINGSGEGEVENS').setFontWeight(true);
+    // Footer line
+    const footerLine = body.appendParagraph(
+      `MORE IS MORE! Agency VZW | ${COMPANY_INFO.address}, ${COMPANY_INFO.postalCode} ${COMPANY_INFO.city} | ${COMPANY_INFO.vatNumber} | RPR Brussel`
+    );
+    footerLine.setFontSize(8);
+    footerLine.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    footerLine.setSpacingAfter(20);
+    
+    // BETALINGSGEGEVENS
+    const paymentHeader = body.appendParagraph('BETALINGSGEGEVENS');
+    paymentHeader.setBold(true);
+    paymentHeader.setFontSize(12);
+    paymentHeader.setSpacingAfter(10);
+    
     body.appendParagraph(
+      `Bank: Triodos Bank\n` +
+      `Rekeninghouder: ${COMPANY_INFO.name}\n` +
       `IBAN: ${COMPANY_INFO.iban}\n` +
       `BIC: ${COMPANY_INFO.bic}\n` +
-      `Mededeling: ${invoiceData.invoiceNumber}`
+      `Mededeling: ${invoiceData.invoiceNumber}\n` +
+      `Vervaldatum: ${calculateDueDate(invoiceData.invoiceDate)}`
+    ).setFontSize(10).setSpacingAfter(20);
+    
+    // ALGEMENE VOORWAARDEN
+    const termsHeader = body.appendParagraph('ALGEMENE VOORWAARDEN');
+    termsHeader.setBold(true);
+    termsHeader.setFontSize(11);
+    termsHeader.setSpacingAfter(10);
+    
+    body.appendParagraph(
+      '1. Deze factuur is betaalbaar binnen 30 dagen na factuurdatum.\n' +
+      '2. Bij niet-betaling op de vervaldag is van rechtswege en zonder ingebrekestelling een intrest verschuldigd van 10% per jaar.\n' +
+      '3. Bovendien is bij gehele of gedeeltelijke niet-betaling van de schuld op de vervaldag van rechtswege en zonder ingebrekestelling een forfaitaire vergoeding verschuldigd van 10% op het factuurbedrag, met een minimum van € 75,00.\n' +
+      '4. Alle geschillen vallen onder de exclusieve bevoegdheid van de rechtbanken van Brussel.'
+    ).setFontSize(9).setSpacingAfter(20);
+    
+    // Final footer
+    const finalFooter = body.appendParagraph(
+      `MORE IS MORE! Agency VZW | ${COMPANY_INFO.address}, ${COMPANY_INFO.postalCode} ${COMPANY_INFO.city} | ${COMPANY_INFO.vatNumber} | RPR Brussel`
     );
+    finalFooter.setFontSize(8);
+    finalFooter.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
     
     console.log('✅ Document content created');
     
-    // STEP 6: Save document and wait
+    // Save and close
     tempDoc.saveAndClose();
     console.log('✅ Document saved and closed');
     
-    // CRITICAL: Wait longer for document to be ready
+    // Wait for document to be ready
     Utilities.sleep(5000);
     
-    // STEP 7: Convert to PDF with error handling
+    // Convert to PDF
     let pdfBlob;
     try {
       pdfBlob = tempDoc.getAs('application/pdf');
@@ -1004,7 +1151,7 @@ function generateInvoicePDF(invoiceData) {
       throw new Error('PDF conversion failed: ' + pdfError.message);
     }
     
-    // STEP 8: Save to Drive with systematic naming
+    // Save to Drive
     const fileName = `Factuur_${invoiceData.invoiceNumber}.pdf`;
     
     try {
@@ -1061,77 +1208,17 @@ function generateInvoicePDF(invoiceData) {
   }
 }
 
-/**
- * SIMPLIFIED PROJECT CREATION - FIX FOR 502 ERRORS
- */
-function createProject(projectData) {
-  try {
-    console.log('=== CREATING PROJECT ===');
-    console.log('Project data:', projectData);
-    
-    // Enhanced validation
-    if (!projectData || !projectData.Naam || !projectData.Type) {
-      throw new Error('VALIDATION_ERROR: Project name and type are required');
-    }
-    
-    // Sanitize data
-    const record = {
-      Naam: String(projectData.Naam).trim(),
-      Type: String(projectData.Type).trim(),
-      Beschrijving: projectData.Beschrijving ? String(projectData.Beschrijving).trim() : '',
-      Aangemaakt: new Date().toISOString().split('T')[0]
-    };
-    
-    console.log('Sanitized record:', record);
-    
-    // Use improved Airtable service
-    const airtable = new AirtableService();
-    const result = airtable.createRecord('Projecten', record, { typecast: true });
-    
-    console.log('Project creation result:', result);
-    return result;
-    
-  } catch (error) {
-    console.error('Project creation error:', error);
-    return ErrorHandler.handle(error, { function: 'createProject', projectData });
-  }
+function calculateDueDate(invoiceDate) {
+  const parts = invoiceDate.split('/');
+  const date = new Date(parts[2], parts[1] - 1, parts[0]);
+  date.setDate(date.getDate() + 30);
+  return `${date.getDate()}/${date.getMonth() + 1}/${date.getFullYear()}`;
 }
 
-// Helper functions for date handling
-function parseDate(dateString) {
-  const parts = dateString.split('/');
-  return new Date(parts[2], parts[1] - 1, parts[0]);
-}
-
-function formatDate(date) {
-  const day = date.getDate().toString().padStart(2, '0');
-  const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const year = date.getFullYear();
-  return `${day}/${month}/${year}`;
-}
-
-// ==================== BUG FIX 3: FILE UPLOAD FOR EXPENSES (GEFIXED) ====================
-function generateExpenseNumber() {
-  try {
-    const properties = PropertiesService.getScriptProperties();
-    const year = new Date().getFullYear();
-    const key = `expenseNumber_${year}`;
-    
-    let lastNumber = parseInt(properties.getProperty(key) || '0');
-    const newNumber = lastNumber + 1;
-    
-    properties.setProperty(key, newNumber.toString());
-    
-    return `UIT-${year}-${String(newNumber).padStart(4, '0')}`;
-    
-  } catch (error) {
-    return `UIT-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`;
-  }
-}
-
+// ==================== EXPENSE FUNCTIONS ====================
 function createExpense(expenseData) {
   try {
-    if (!expenseData.expenseNumber) {
+    if (!expenseData.expenseNumber || expenseData.expenseNumber.trim() === '') {
       expenseData.expenseNumber = generateExpenseNumber();
     }
     
@@ -1175,7 +1262,7 @@ function createExpenseWithFile(expenseData, fileBlob, fileName) {
     // Upload file to organized folder structure
     const fileResult = uploadExpenseFile(fileBlob, fileName, expenseData);
     
-    // FIXED: Update the expense record with NEW field names
+    // Update the expense record with file info
     if (fileResult.success) {
       const airtable = new AirtableService();
       const updateResult = airtable.updateRecord('Transacties', expenseResult.record.id, {
@@ -1241,9 +1328,12 @@ function uploadExpenseFile(fileBlob, fileName, expenseData) {
 }
 
 function getOrCreateExpenseFolder() {
-  const folderName = 'Expense Files';
-  const folders = DriveApp.getFoldersByName(folderName);
-  return folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
+  try {
+    return DriveApp.getFolderById(DRIVE_FOLDERS.EXPENSES);
+  } catch (error) {
+    const folders = DriveApp.getFoldersByName('Expense Files');
+    return folders.hasNext() ? folders.next() : DriveApp.createFolder('Expense Files');
+  }
 }
 
 function getOrCreateCategoryFolder(parentFolder, category) {
@@ -1258,7 +1348,7 @@ function getOrCreateMonthFolder(parentFolder) {
   return folders.hasNext() ? folders.next() : parentFolder.createFolder(folderName);
 }
 
-// ==================== BUG FIX 4: REPORT PDF GENERATION (GEFIXED) ====================
+// ==================== BUG FIX 5: REPORT GENERATION WITH PROPER STYLING ====================
 function generateReport(config) {
   try {
     const airtable = new AirtableService();
@@ -1280,11 +1370,31 @@ function generateReport(config) {
     }
     
     // Date filtering
-    if (config.periodType === 'month' && config.periodValue) {
-      const [year, month] = config.periodValue.split('-');
+    if (config.periodType === 'month') {
+      const currentDate = new Date();
+      const currentMonth = currentDate.getMonth();
+      const currentYear = currentDate.getFullYear();
+      
       transactions = transactions.filter(t => {
         const date = new Date(t.fields.Date);
-        return date.getFullYear() == year && date.getMonth() == (month - 1);
+        return date.getMonth() === currentMonth && date.getFullYear() === currentYear;
+      });
+    } else if (config.periodType === 'quarter') {
+      const currentDate = new Date();
+      const currentQuarter = Math.floor(currentDate.getMonth() / 3);
+      const currentYear = currentDate.getFullYear();
+      
+      transactions = transactions.filter(t => {
+        const date = new Date(t.fields.Date);
+        const quarter = Math.floor(date.getMonth() / 3);
+        return quarter === currentQuarter && date.getFullYear() === currentYear;
+      });
+    } else if (config.periodType === 'year') {
+      const currentYear = new Date().getFullYear();
+      
+      transactions = transactions.filter(t => {
+        const date = new Date(t.fields.Date);
+        return date.getFullYear() === currentYear;
       });
     }
     
@@ -1305,7 +1415,7 @@ function generateReport(config) {
       totalVAT += vat;
     });
     
-    // Sort transactions
+    // Sort transactions by date
     transactions.sort((a, b) => {
       const dateA = new Date(a.fields.Date || 0);
       const dateB = new Date(b.fields.Date || 0);
@@ -1337,151 +1447,334 @@ function generateReport(config) {
 }
 
 function getPeriodDescription(config) {
+  const now = new Date();
+  const monthNames = ['Januari', 'Februari', 'Maart', 'April', 'Mei', 'Juni', 
+                      'Juli', 'Augustus', 'September', 'Oktober', 'November', 'December'];
+  
   switch(config.periodType) {
     case 'month':
-      return `Month: ${config.periodValue}`;
+      return `${monthNames[now.getMonth()]} ${now.getFullYear()}`;
     case 'quarter':
-      return `Quarter: ${config.periodValue}`;
+      const quarter = Math.floor(now.getMonth() / 3) + 1;
+      return `Q${quarter} ${now.getFullYear()}`;
     case 'year':
-      return `Year: ${config.periodValue}`;
+      return `${now.getFullYear()}`;
     default:
-      return 'All periods';
+      return 'Alle periodes';
   }
 }
 
+/**
+ * BUG FIX 5: ENHANCED PDF REPORT WITH EXECUTIVE STYLING
+ */
 function exportReportToPDF(reportData) {
   try {
+    console.log('=== GENERATING EXECUTIVE REPORT PDF ===');
+    
     const timestamp = new Date().toISOString().slice(0,10);
-    const tempDoc = DocumentApp.create(`Financial_Report_${timestamp}_${Date.now()}`);
+    const tempDoc = DocumentApp.create(`Executive_Report_${timestamp}_${Date.now()}`);
     const body = tempDoc.getBody();
     
     body.clear();
     
-    // Header with styling and colors
+    // Set page margins
+    body.setMarginTop(72); // 1 inch
+    body.setMarginBottom(72);
+    body.setMarginLeft(72);
+    body.setMarginRight(72);
+    
+    // HEADER - Executive style
     const header = body.appendParagraph('MORE IS MORE! Agency');
-    header.setHeading(DocumentApp.ParagraphHeading.HEADING1);
+    header.setFontSize(28);
+    header.setBold(true);
     header.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
-    header.setForegroundColor('#2c5aa0');
+    header.setForegroundColor('#1e40af');
+    header.setSpacingAfter(10);
     
-    const subtitle = body.appendParagraph('FINANCIAL REPORT');
-    subtitle.setHeading(DocumentApp.ParagraphHeading.HEADING2);
+    const subtitle = body.appendParagraph('EXECUTIVE BUSINESS REPORT');
+    subtitle.setFontSize(20);
+    subtitle.setBold(true);
     subtitle.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
-    subtitle.setForegroundColor('#2c5aa0');
+    subtitle.setForegroundColor('#1e40af');
+    subtitle.setSpacingAfter(20);
     
-    body.appendParagraph(`Period: ${reportData.summary.period}`);
-    body.appendParagraph(`Generated: ${new Date().toLocaleDateString('nl-BE')}`);
-    body.appendParagraph('');
+    // Report info
+    const info = body.appendParagraph(
+      `Periode: ${reportData.summary.period}\n` +
+      `Gegenereerd: ${new Date().toLocaleDateString('nl-BE', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      })}`
+    );
+    info.setFontSize(11);
+    info.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    info.setSpacingAfter(30);
     
-    // Summary with color coding
-    const summaryHeader = body.appendParagraph('EXECUTIVE SUMMARY');
-    summaryHeader.setHeading(DocumentApp.ParagraphHeading.HEADING2);
-    summaryHeader.setForegroundColor('#2c5aa0');
+    // KPI DASHBOARD - Executive Summary
+    const kpiHeader = body.appendParagraph('KEY PERFORMANCE INDICATORS');
+    kpiHeader.setFontSize(16);
+    kpiHeader.setBold(true);
+    kpiHeader.setForegroundColor('#1e40af');
+    kpiHeader.setSpacingAfter(15);
     
-    const summaryTable = body.appendTable();
-    const summaryHeaderRow = summaryTable.appendTableRow();
-    const headerCell1 = summaryHeaderRow.appendTableCell('METRIC');
-    const headerCell2 = summaryHeaderRow.appendTableCell('AMOUNT');
-    headerCell1.setBackgroundColor('#2c5aa0');
-    headerCell1.setForegroundColor('#ffffff');
-    headerCell2.setBackgroundColor('#2c5aa0');
-    headerCell2.setForegroundColor('#ffffff');
+    // KPI Table with proper colors
+    const kpiTable = body.appendTable();
+    kpiTable.setBorderWidth(0);
     
-    const summaryData = [
-      ['Total Income', `€${reportData.summary.totalIncome.toFixed(2)}`],
-      ['Total Expenses', `€${reportData.summary.totalExpenses.toFixed(2)}`],
-      ['Net Result', `€${reportData.summary.netResult.toFixed(2)}`],
-      ['Total VAT', `€${reportData.summary.totalVAT.toFixed(2)}`],
-      ['Transaction Count', reportData.summary.transactionCount.toString()]
-    ];
+    // Create 2x2 grid for KPIs
+    const kpiRow1 = kpiTable.appendTableRow();
+    const kpiRow2 = kpiTable.appendTableRow();
     
-    summaryData.forEach((row, index) => {
-      const tableRow = summaryTable.appendTableRow();
-      const labelCell = tableRow.appendTableCell(row[0]);
-      const amountCell = tableRow.appendTableCell(row[1]);
-      
-      // Alternate row colors
-      if (index % 2 === 1) {
-        labelCell.setBackgroundColor('#f8f9fa');
-        amountCell.setBackgroundColor('#f8f9fa');
-      }
-      
-      // Color code net result
-      if (row[0] === 'Net Result') {
-        amountCell.setForegroundColor(reportData.summary.netResult >= 0 ? '#10b981' : '#ef4444');
-      }
+    // Total Income KPI
+    const incomeCell = kpiRow1.appendTableCell();
+    const incomePara1 = incomeCell.appendParagraph('Totale Omzet');
+    incomePara1.setFontSize(12);
+    incomePara1.setBold(true);
+    incomePara1.setForegroundColor('#666666');
+    
+    const incomePara2 = incomeCell.appendParagraph(`€${reportData.summary.totalIncome.toFixed(2)}`);
+    incomePara2.setFontSize(24);
+    incomePara2.setBold(true);
+    incomePara2.setForegroundColor('#10b981');
+    incomeCell.setBackgroundColor('#f0fdf4');
+    incomeCell.setPaddingTop(20);
+    incomeCell.setPaddingBottom(20);
+    incomeCell.setPaddingLeft(20);
+    incomeCell.setPaddingRight(20);
+    
+    // Total Expenses KPI
+    const expenseCell = kpiRow1.appendTableCell();
+    const expensePara1 = expenseCell.appendParagraph('Totale Kosten');
+    expensePara1.setFontSize(12);
+    expensePara1.setBold(true);
+    expensePara1.setForegroundColor('#666666');
+    
+    const expensePara2 = expenseCell.appendParagraph(`€${reportData.summary.totalExpenses.toFixed(2)}`);
+    expensePara2.setFontSize(24);
+    expensePara2.setBold(true);
+    expensePara2.setForegroundColor('#ef4444');
+    expenseCell.setBackgroundColor('#fef2f2');
+    expenseCell.setPaddingTop(20);
+    expenseCell.setPaddingBottom(20);
+    expenseCell.setPaddingLeft(20);
+    expenseCell.setPaddingRight(20);
+    
+    // Net Result KPI
+    const netCell = kpiRow2.appendTableCell();
+    const netPara1 = netCell.appendParagraph('Netto Winst');
+    netPara1.setFontSize(12);
+    netPara1.setBold(true);
+    netPara1.setForegroundColor('#666666');
+    
+    const netPara2 = netCell.appendParagraph(`€${reportData.summary.netResult.toFixed(2)}`);
+    netPara2.setFontSize(24);
+    netPara2.setBold(true);
+    netPara2.setForegroundColor(reportData.summary.netResult >= 0 ? '#10b981' : '#ef4444');
+    netCell.setBackgroundColor(reportData.summary.netResult >= 0 ? '#f0fdf4' : '#fef2f2');
+    netCell.setPaddingTop(20);
+    netCell.setPaddingBottom(20);
+    netCell.setPaddingLeft(20);
+    netCell.setPaddingRight(20);
+    
+    // Margin % KPI
+    const marginCell = kpiRow2.appendTableCell();
+    const marginPara1 = marginCell.appendParagraph('Winstmarge');
+    marginPara1.setFontSize(12);
+    marginPara1.setBold(true);
+    marginPara1.setForegroundColor('#666666');
+    
+    const margin = reportData.summary.totalIncome > 0 
+      ? ((reportData.summary.netResult / reportData.summary.totalIncome) * 100).toFixed(1)
+      : '0.0';
+    const marginPara2 = marginCell.appendParagraph(`${margin}%`);
+    marginPara2.setFontSize(24);
+    marginPara2.setBold(true);
+    marginPara2.setForegroundColor(parseFloat(margin) >= 0 ? '#10b981' : '#ef4444');
+    marginCell.setBackgroundColor('#f8fafc');
+    marginCell.setPaddingTop(20);
+    marginCell.setPaddingBottom(20);
+    marginCell.setPaddingLeft(20);
+    marginCell.setPaddingRight(20);
+    
+    body.appendParagraph('').setSpacingAfter(30);
+    
+    // BUSINESS INSIGHTS
+    const insightsHeader = body.appendParagraph('BUSINESS INSIGHTS');
+    insightsHeader.setFontSize(16);
+    insightsHeader.setBold(true);
+    insightsHeader.setForegroundColor('#1e40af');
+    insightsHeader.setSpacingAfter(15);
+    
+    // Insight bullets
+    const insights = [];
+    
+    if (reportData.summary.netResult < 0) {
+      insights.push('🔴 Verlies Situatie: Netto resultaat is negatief. Kostenbeheersing en omzetverhoging vereist.');
+    } else {
+      insights.push('🟢 Winstgevend: Positief netto resultaat behaald deze periode.');
+    }
+    
+    if (reportData.summary.totalIncome > reportData.summary.totalExpenses * 2) {
+      insights.push('⭐ Uitstekende Prestatie: Omzet is meer dan dubbel de kosten.');
+    }
+    
+    if (reportData.summary.transactionCount > 50) {
+      insights.push('📊 Hoge Activiteit: Meer dan 50 transacties deze periode.');
+    }
+    
+    insights.forEach(insight => {
+      const insightPara = body.appendParagraph(insight);
+      insightPara.setFontSize(11);
+      insightPara.setSpacingAfter(8);
     });
     
-    body.appendParagraph('');
+    body.appendParagraph('').setSpacingAfter(30);
     
-    // Detailed transactions with columns and colors
+    // DETAILED TRANSACTIONS
     if (reportData.transactions && reportData.transactions.length > 0) {
-      const detailHeader = body.appendParagraph('DETAILED TRANSACTIONS');
-      detailHeader.setHeading(DocumentApp.ParagraphHeading.HEADING2);
-      detailHeader.setForegroundColor('#2c5aa0');
+      const detailHeader = body.appendParagraph('GEDETAILLEERD TRANSACTIE OVERZICHT');
+      detailHeader.setFontSize(16);
+      detailHeader.setBold(true);
+      detailHeader.setForegroundColor('#1e40af');
+      detailHeader.setSpacingAfter(15);
       
+      // Transaction table with better styling
       const table = body.appendTable();
-      const headerRow = table.appendTableRow();
+      table.setBorderWidth(1);
+      table.setBorderColor('#e5e7eb');
       
-      // Header with blue background
-      ['Date', 'Type', 'Description', 'Project', 'Amount', 'VAT', 'Total'].forEach(header => {
+      // Header row with dark blue background
+      const headerRow = table.appendTableRow();
+      const headers = ['Datum', 'Type', 'Referentie', 'Project', 'Beschrijving', 'Bedrag', 'BTW', 'Totaal'];
+      
+      headers.forEach((header, index) => {
         const cell = headerRow.appendTableCell(header);
-        cell.setBackgroundColor('#2c5aa0');
+        cell.setBackgroundColor('#1e40af');
         cell.setForegroundColor('#ffffff');
+        cell.setBold(true);
+        cell.setPaddingTop(10);
+        cell.setPaddingBottom(10);
+        cell.setPaddingLeft(8);
+        cell.setPaddingRight(8);
+        
+        // Set text properties properly
+        const para = cell.getChild(0).asParagraph();
+        para.setForegroundColor('#ffffff');
+        para.setBold(true);
+        para.setFontSize(10);
       });
       
-      // Data rows with alternating colors - FIXED
+      // Data rows with alternating colors
       reportData.transactions.forEach((transaction, index) => {
         const fields = transaction.fields;
         const row = table.appendTableRow();
         
-        // Create all cells first
-        const dateCell = row.appendTableCell(new Date(fields.Date).toLocaleDateString('nl-BE'));
-        const typeCell = row.appendTableCell(fields.Select || '');
-        const descCell = row.appendTableCell(fields.Beschrijving || '');
-        const projectCell = row.appendTableCell(fields.Project || '');
-        const amountCell = row.appendTableCell(`€${(fields.Bedrag || 0).toFixed(2)}`);
-        const vatCell = row.appendTableCell(`€${(fields['BTW Bedrag'] || 0).toFixed(2)}`);
-        const totalCell = row.appendTableCell(`€${(fields.Totaal || 0).toFixed(2)}`);
+        // Data cells
+        const cells = [
+          new Date(fields.Date).toLocaleDateString('nl-BE'),
+          fields.Select || '',
+          fields.Name || '',
+          fields.Project || 'Algemeen',
+          fields.Beschrijving || '',
+          `€${(fields.Bedrag || 0).toFixed(2)}`,
+          `€${(fields['BTW Bedrag'] || 0).toFixed(2)}`,
+          `€${(fields.Totaal || 0).toFixed(2)}`
+        ];
         
-        // Apply alternating row colors AFTER cells exist
-        if (index % 2 === 1) {
-          dateCell.setBackgroundColor('#f8f9fa');
-          typeCell.setBackgroundColor('#f8f9fa');
-          descCell.setBackgroundColor('#f8f9fa');
-          projectCell.setBackgroundColor('#f8f9fa');
-          amountCell.setBackgroundColor('#f8f9fa');
-          vatCell.setBackgroundColor('#f8f9fa');
-          totalCell.setBackgroundColor('#f8f9fa');
-        }
-        
-        // Color code transaction type
-        if (fields.Select === 'Inkomsten') {
-          typeCell.setForegroundColor('#10b981');
-        } else if (fields.Select === 'Uitgaven') {
-          typeCell.setForegroundColor('#ef4444');
-        }
+        cells.forEach((cellData, cellIndex) => {
+          const cell = row.appendTableCell(cellData);
+          
+          // Alternating row colors
+          if (index % 2 === 1) {
+            cell.setBackgroundColor('#f9fafb');
+          } else {
+            cell.setBackgroundColor('#ffffff');
+          }
+          
+          // Cell styling
+          cell.setPaddingTop(8);
+          cell.setPaddingBottom(8);
+          cell.setPaddingLeft(8);
+          cell.setPaddingRight(8);
+          
+          // Text styling
+          const para = cell.getChild(0).asParagraph();
+          para.setFontSize(9);
+          
+          // Color code transaction type
+          if (cellIndex === 1) { // Type column
+            if (fields.Select === 'Inkomsten') {
+              para.setForegroundColor('#10b981');
+              para.setBold(true);
+            } else {
+              para.setForegroundColor('#ef4444');
+              para.setBold(true);
+            }
+          } else if (cellIndex >= 5) { // Amount columns
+            para.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+            if (fields.Select === 'Inkomsten') {
+              para.setForegroundColor('#065f46');
+            } else {
+              para.setForegroundColor('#991b1b');
+            }
+          } else {
+            para.setForegroundColor('#374151');
+          }
+        });
       });
-    } else {
-      body.appendParagraph('No transactions found for the selected criteria.');
+      
+      body.appendParagraph('').setSpacingAfter(30);
     }
     
-    // Footer with company info
-    body.appendParagraph('');
-    const footer = body.appendParagraph(`Report generated by MORE IS MORE! Agency | ${COMPANY_INFO.vatNumber} | ${new Date().toLocaleDateString('nl-BE')}`);
-    footer.setFontSize(9);
-    footer.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
-    footer.setForegroundColor('#666666');
+    // FOOTER
+    body.appendPageBreak();
     
-    // CRITICAL: Save and close before PDF conversion
+    const footerHeader = body.appendParagraph('DISCLAIMER & CONTACT');
+    footerHeader.setFontSize(14);
+    footerHeader.setBold(true);
+    footerHeader.setForegroundColor('#1e40af');
+    footerHeader.setSpacingAfter(10);
+    
+    const disclaimer = body.appendParagraph(
+      'Dit rapport is automatisch gegenereerd door het VZW Accounting System en is alleen bedoeld voor intern gebruik. ' +
+      'Alle bedragen zijn exclusief BTW tenzij anders vermeld. Voor vragen of opmerkingen, neem contact op met de financiële afdeling.'
+    );
+    disclaimer.setFontSize(10);
+    disclaimer.setForegroundColor('#6b7280');
+    disclaimer.setSpacingAfter(20);
+    
+    // Company info footer
+    const footer = body.appendParagraph(
+      `${COMPANY_INFO.name}\n` +
+      `${COMPANY_INFO.address}, ${COMPANY_INFO.postalCode} ${COMPANY_INFO.city}\n` +
+      `Tel: ${COMPANY_INFO.phone} | Email: ${COMPANY_INFO.email}\n` +
+      `BTW: ${COMPANY_INFO.vatNumber}`
+    );
+    footer.setFontSize(10);
+    footer.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    footer.setForegroundColor('#6b7280');
+    
+    // Save and close
     tempDoc.saveAndClose();
     
-    // Extended wait time for complex reports
+    // Wait for document processing
     Utilities.sleep(3000);
     
     // Convert to PDF
     const pdfBlob = tempDoc.getAs('application/pdf');
-    const folder = DriveApp.getFolderById(DRIVE_FOLDERS.REPORTS);
-    const fileName = `Financial_Report_${timestamp}.pdf`;
+    
+    // Save to reports folder
+    let folder;
+    try {
+      folder = DriveApp.getFolderById(DRIVE_FOLDERS.REPORTS);
+    } catch (error) {
+      const folders = DriveApp.getFoldersByName('Reports');
+      folder = folders.hasNext() ? folders.next() : DriveApp.createFolder('Reports');
+    }
+    
+    const fileName = `Executive_Report_${reportData.summary.period.replace(/\s/g, '_')}_${timestamp}.pdf`;
     const file = folder.createFile(pdfBlob);
     file.setName(fileName);
     
@@ -1500,6 +1793,7 @@ function exportReportToPDF(reportData) {
     };
     
   } catch (error) {
+    console.error('Report PDF generation error:', error);
     return ErrorHandler.handle(error, { function: 'exportReportToPDF' });
   }
 }
