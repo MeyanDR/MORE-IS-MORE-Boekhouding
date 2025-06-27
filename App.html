@@ -14,7 +14,7 @@ let selectedExpenseFile = null;
 
 // ==================== INITIALISATIE ====================
 document.addEventListener('DOMContentLoaded', function() {
-  console.log('VZW Accounting System v4.0 - Initializing with ALL FIXES...');
+  console.log('VZW Accounting System v5.0 - All 6 bugs fixed!');
   
   setupNavigation();
   setupEventListeners();
@@ -69,6 +69,8 @@ function showSection(sectionName) {
       case 'expenses':
         loadExpenses();
         loadProjectsForDropdowns();
+        // BUG FIX 4: Generate expense number when loading expenses section
+        generateExpenseNumberForForm();
         break;
       case 'reports':
         loadProjectsForDropdowns();
@@ -141,16 +143,16 @@ function testConnection() {
 function handleConnectionSuccess(result) {
   if (result.success) {
     updateConnectionStatus('connected', 'Verbonden met Airtable');
-    showSuccess('Verbinding met Airtable succesvol getest!');
+    showSuccess('✅ Verbinding met Airtable succesvol getest!');
   } else {
     updateConnectionStatus('disconnected', 'Verbinding mislukt');
-    showError('Verbindingstest mislukt: ' + result.error);
+    showError('❌ Verbindingstest mislukt: ' + result.error);
   }
 }
 
 function handleConnectionError(error) {
   updateConnectionStatus('disconnected', 'Verbinding mislukt');
-  showError('Kan geen verbinding maken met Airtable: ' + error.message);
+  showError('❌ Kan geen verbinding maken met Airtable: ' + error.message);
 }
 
 function updateConnectionStatus(status, message) {
@@ -171,7 +173,7 @@ function updateConnectionStatus(status, message) {
   text.textContent = message;
 }
 
-// ==================== BUG FIX 1: CLIENT AUTOCOMPLETE (GEFIXED) ====================
+// ==================== CLIENT AUTOCOMPLETE ====================
 function setupClientAutocomplete() {
   const searchInput = document.getElementById('clientSearch');
   const resultsDiv = document.getElementById('clientSearchResults');
@@ -357,7 +359,7 @@ function saveNewClientFromInvoice() {
     .createClient(clientData);
 }
 
-// ==================== BUG FIX 3: FILE UPLOAD SYSTEM (GEFIXED) ====================
+// ==================== FILE UPLOAD SYSTEM ====================
 function setupFileUpload() {
   const fileInput = document.getElementById('expenseFile');
   const dropZone = document.getElementById('fileDropZone');
@@ -638,11 +640,9 @@ function deleteTransaction(recordId) {
 }
 
 // ==================== PROJECTS ====================
-// ==================== VERBETERDE PROJECT SUBMIT (502 ERROR FIX) ====================
 function handleProjectSubmit(e) {
   e.preventDefault();
   
-  // Disable submit button immediately
   const submitBtn = e.target.querySelector('button[type="submit"]');
   const originalText = submitBtn.textContent;
   submitBtn.disabled = true;
@@ -654,7 +654,6 @@ function handleProjectSubmit(e) {
     Beschrijving: document.getElementById('projectDescription').value.trim()
   };
   
-  // Enhanced validation
   if (!projectData.Naam || projectData.Naam.length < 2) {
     showError('❌ Projectnaam moet minimaal 2 karakters lang zijn');
     resetSubmitButton(submitBtn, originalText);
@@ -669,7 +668,6 @@ function handleProjectSubmit(e) {
   
   showInfo('💾 Project aanmaken... Dit kan even duren.');
   
-  // Set longer timeout for project creation
   const timeoutId = setTimeout(() => {
     showError('⏰ Project aanmaken duurt langer dan verwacht. Controleer je internetverbinding.');
   }, 15000);
@@ -709,7 +707,204 @@ function handleProjectSubmit(e) {
     .createProject(projectData);
 }
 
-// ==================== VERBETERDE INVOICE SUBMIT (PDF EXPORT FIX) ====================
+function loadProjects() {
+  google.script.run
+    .withSuccessHandler(updateProjectsTable)
+    .withFailureHandler(handleError)
+    .getAllProjects();
+}
+
+function updateProjectsTable(result) {
+  const tbody = document.getElementById('projectsBody');
+  tbody.innerHTML = '';
+  
+  if (!result.success || result.records.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center">Geen projecten gevonden</td></tr>';
+    return;
+  }
+  
+  result.records.forEach(project => {
+    const fields = project.fields;
+    const row = document.createElement('tr');
+    
+    row.innerHTML = `
+      <td>${fields.Naam}</td>
+      <td><span class="status-badge status-paid">${fields.Type}</span></td>
+      <td>${fields.Beschrijving || '-'}</td>
+      <td>${formatDate(fields.Aangemaakt)}</td>
+      <td>
+        <button class="btn btn-danger btn-small" onclick="deleteProject('${project.id}')">
+          🗑️
+        </button>
+      </td>
+    `;
+    
+    tbody.appendChild(row);
+  });
+}
+
+function deleteProject(recordId) {
+  if (!confirm('🗑️ Weet je zeker dat je dit project wilt verwijderen?')) {
+    return;
+  }
+  
+  showInfo('🗑️ Project verwijderen...');
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        showSuccess('✅ Project succesvol verwijderd!');
+        loadProjects();
+        loadProjectsForDropdowns();
+      } else {
+        showError('❌ Project verwijderen mislukt: ' + result.error);
+      }
+    })
+    .withFailureHandler(handleError)
+    .deleteProject(recordId);
+}
+
+function loadProjectsForDropdowns() {
+  google.script.run
+    .withSuccessHandler(populateProjectDropdowns)
+    .withFailureHandler(function(error) {
+      console.error('Failed to load projects for dropdowns:', error);
+    })
+    .getAllProjects();
+}
+
+function populateProjectDropdowns(result) {
+  if (!result.success) return;
+  
+  const dropdowns = [
+    document.getElementById('transactionProject'),
+    document.getElementById('expenseProject'),
+    document.getElementById('reportProject')
+  ];
+  
+  dropdowns.forEach(dropdown => {
+    if (!dropdown) return;
+    
+    // Clear existing options except the first one
+    const firstOption = dropdown.querySelector('option');
+    dropdown.innerHTML = '';
+    if (firstOption) {
+      dropdown.appendChild(firstOption);
+    }
+    
+    // Add project options
+    result.records.forEach(project => {
+      const option = document.createElement('option');
+      option.value = project.fields.Naam;
+      option.textContent = project.fields.Naam;
+      dropdown.appendChild(option);
+    });
+  });
+}
+
+// ==================== INVOICE MANAGEMENT ====================
+function openInvoiceModal() {
+  document.getElementById('invoiceModal').style.display = 'block';
+  
+  // BUG FIX 2: Don't auto-generate number on modal open
+  // Instead, only generate if field is empty
+  const invoiceNumberField = document.getElementById('invoiceNumber');
+  if (!invoiceNumberField.value || invoiceNumberField.value.trim() === '') {
+    generateInvoiceNumber();
+  }
+  
+  // Clear previous data
+  selectedClientData = null;
+  clearClientForm();
+  
+  // Set default dates
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('invoiceDate').value = today;
+  
+  // Auto-set project period to current month
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  
+  const projectPeriodField = document.getElementById('invoiceProjectPeriod');
+  if (projectPeriodField) {
+    projectPeriodField.value = `${startOfMonth.toLocaleDateString('nl-BE')} - ${endOfMonth.toLocaleDateString('nl-BE')}`;
+  }
+}
+
+function closeInvoiceModal() {
+  document.getElementById('invoiceModal').style.display = 'none';
+}
+
+// BUG FIX 1 & 2: Generate invoice number from Airtable
+function generateInvoiceNumber() {
+  showInfo('📝 Factuurnummer ophalen van Airtable...');
+  
+  google.script.run
+    .withSuccessHandler(function(invoiceNumber) {
+      document.getElementById('invoiceNumber').value = invoiceNumber;
+      showSuccess('✅ Factuurnummer: ' + invoiceNumber);
+    })
+    .withFailureHandler(function(error) {
+      console.error('Failed to generate invoice number:', error);
+      const fallbackNumber = `${new Date().getFullYear()}-${Date.now().toString().slice(-3)}`;
+      document.getElementById('invoiceNumber').value = fallbackNumber;
+      showWarning('⚠️ Kon geen nummer van Airtable krijgen, tijdelijk nummer gebruikt');
+    })
+    .generateInvoiceNumber();
+}
+
+function addInvoiceService() {
+  const container = document.getElementById('invoiceServicesContainer');
+  const serviceCount = container.children.length + 1;
+  
+  const serviceDiv = document.createElement('div');
+  serviceDiv.className = 'invoice-service-item';
+  serviceDiv.innerHTML = `
+    <button type="button" class="remove-service" onclick="removeInvoiceService(this)">×</button>
+    <h5>🛠️ Dienst ${serviceCount}</h5>
+    <div class="form-group">
+      <label class="form-label">📝 Omschrijving *</label>
+      <input type="text" class="form-control service-description" required>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">🔢 Aantal</label>
+        <input type="number" class="form-control service-quantity" min="1" value="1" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">💰 Prijs (€)</label>
+        <input type="number" class="form-control service-price" step="0.01" min="0" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">📊 BTW</label>
+        <select class="form-control service-vat">
+          <option value="0">0% (Vrijgesteld)</option>
+          <option value="21" selected>21%</option>
+          <option value="6">6%</option>
+          <option value="12">12%</option>
+        </select>
+      </div>
+    </div>
+  `;
+  
+  container.appendChild(serviceDiv);
+}
+
+function removeInvoiceService(button) {
+  const serviceItem = button.closest('.invoice-service-item');
+  serviceItem.remove();
+  
+  // Renumber remaining services
+  const container = document.getElementById('invoiceServicesContainer');
+  const services = container.querySelectorAll('.invoice-service-item');
+  services.forEach((service, index) => {
+    const header = service.querySelector('h5');
+    header.textContent = `🛠️ Dienst ${index + 1}`;
+  });
+}
+
+// BUG FIX 3: Enhanced invoice submit with PDF generation
 function handleInvoiceSubmit(e) {
   e.preventDefault();
   
@@ -835,303 +1030,6 @@ function handleInvoiceSubmit(e) {
     .createInvoice(invoiceData);
 }
 
-// ==================== UTILITY FUNCTIONS ====================
-function resetSubmitButton(button, originalText) {
-  if (button) {
-    button.disabled = false;
-    button.textContent = originalText;
-  }
-}
-
-// Enhanced alert system with auto-dismiss for long messages
-function showAlert(alertId, message) {
-  hideAlerts();
-  const alert = document.getElementById(alertId);
-  alert.innerHTML = message;
-  alert.classList.add('show');
-  
-  // Auto-dismiss after longer time for important messages
-  const dismissTime = message.length > 100 ? 12000 : 8000;
-  setTimeout(() => {
-    alert.classList.remove('show');
-  }, dismissTime);
-}
-
-// Add connection test function with retry
-function testConnectionWithRetry() {
-  let attempts = 0;
-  const maxAttempts = 3;
-  
-  function attemptConnection() {
-    attempts++;
-    updateConnectionStatus('testing', `Verbinding testen... (Poging ${attempts}/${maxAttempts})`);
-    
-    google.script.run
-      .withSuccessHandler(function(result) {
-        if (result.success) {
-          updateConnectionStatus('connected', 'Verbonden met Airtable');
-          showSuccess('✅ Verbinding met Airtable succesvol getest!');
-        } else {
-          if (attempts < maxAttempts) {
-            setTimeout(attemptConnection, 2000);
-          } else {
-            updateConnectionStatus('disconnected', 'Verbinding mislukt');
-            showError('❌ Verbinding mislukt na 3 pogingen: ' + result.error);
-          }
-        }
-      })
-      .withFailureHandler(function(error) {
-        if (attempts < maxAttempts) {
-          setTimeout(attemptConnection, 2000);
-        } else {
-          updateConnectionStatus('disconnected', 'Verbinding mislukt');
-          showError('❌ Kan geen verbinding maken na 3 pogingen: ' + error.message);
-        }
-      })
-      .testConnection();
-  }
-  
-  attemptConnection();
-}
-
-// Replace the original testConnection function
-function testConnection() {
-  testConnectionWithRetry();
-}
-function deleteProject(recordId) {
-  if (!confirm('🗑️ Weet je zeker dat je dit project wilt verwijderen?')) {
-    return;
-  }
-  
-  showInfo('🗑️ Project verwijderen...');
-  
-  google.script.run
-    .withSuccessHandler(function(result) {
-      if (result.success) {
-        showSuccess('✅ Project succesvol verwijderd!');
-        loadProjects();
-        loadProjectsForDropdowns();
-      } else {
-        showError('❌ Project verwijderen mislukt: ' + result.error);
-      }
-    })
-    .withFailureHandler(handleError)
-    .deleteProject(recordId);
-}
-
-function loadProjectsForDropdowns() {
-  google.script.run
-    .withSuccessHandler(populateProjectDropdowns)
-    .withFailureHandler(function(error) {
-      console.error('Failed to load projects for dropdowns:', error);
-    })
-    .getAllProjects();
-}
-
-function populateProjectDropdowns(result) {
-  if (!result.success) return;
-  
-  const dropdowns = [
-    document.getElementById('transactionProject'),
-    document.getElementById('expenseProject'),
-    document.getElementById('reportProject')
-  ];
-  
-  dropdowns.forEach(dropdown => {
-    if (!dropdown) return;
-    
-    // Clear existing options except the first one
-    const firstOption = dropdown.querySelector('option');
-    dropdown.innerHTML = '';
-    if (firstOption) {
-      dropdown.appendChild(firstOption);
-    }
-    
-    // Add project options
-    result.records.forEach(project => {
-      const option = document.createElement('option');
-      option.value = project.fields.Naam;
-      option.textContent = project.fields.Naam;
-      dropdown.appendChild(option);
-    });
-  });
-}
-
-// ==================== BUG FIX 2: INVOICE MANAGEMENT (GEFIXED) ====================
-function openInvoiceModal() {
-  document.getElementById('invoiceModal').style.display = 'block';
-  generateInvoiceNumber();
-  
-  // Clear previous data
-  selectedClientData = null;
-  clearClientForm();
-  
-  // Set default dates
-  const today = new Date().toISOString().split('T')[0];
-  document.getElementById('invoiceDate').value = today;
-  
-  // Auto-set project period to current month
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  
-  const projectPeriodField = document.getElementById('invoiceProjectPeriod');
-  if (projectPeriodField) {
-    projectPeriodField.value = `${startOfMonth.toLocaleDateString('nl-BE')} - ${endOfMonth.toLocaleDateString('nl-BE')}`;
-  }
-}
-
-function closeInvoiceModal() {
-  document.getElementById('invoiceModal').style.display = 'none';
-}
-
-function generateInvoiceNumber() {
-  google.script.run
-    .withSuccessHandler(function(invoiceNumber) {
-      document.getElementById('invoiceNumber').value = invoiceNumber;
-    })
-    .withFailureHandler(function(error) {
-      console.error('Failed to generate invoice number:', error);
-      const fallbackNumber = `${new Date().getFullYear()}-${Date.now().toString().slice(-3)}`;
-      document.getElementById('invoiceNumber').value = fallbackNumber;
-    })
-    .generateInvoiceNumber();
-}
-
-function addInvoiceService() {
-  const container = document.getElementById('invoiceServicesContainer');
-  const serviceCount = container.children.length + 1;
-  
-  const serviceDiv = document.createElement('div');
-  serviceDiv.className = 'invoice-service-item';
-  serviceDiv.innerHTML = `
-    <button type="button" class="remove-service" onclick="removeInvoiceService(this)">×</button>
-    <h5>🛠️ Dienst ${serviceCount}</h5>
-    <div class="form-group">
-      <label class="form-label">📝 Omschrijving *</label>
-      <input type="text" class="form-control service-description" required>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label">🔢 Aantal</label>
-        <input type="number" class="form-control service-quantity" min="1" value="1" required>
-      </div>
-      <div class="form-group">
-        <label class="form-label">💰 Prijs (€)</label>
-        <input type="number" class="form-control service-price" step="0.01" min="0" required>
-      </div>
-      <div class="form-group">
-        <label class="form-label">📊 BTW</label>
-        <select class="form-control service-vat">
-          <option value="0">0% (Vrijgesteld)</option>
-          <option value="21" selected>21%</option>
-          <option value="6">6%</option>
-          <option value="12">12%</option>
-        </select>
-      </div>
-    </div>
-  `;
-  
-  container.appendChild(serviceDiv);
-}
-
-function removeInvoiceService(button) {
-  const serviceItem = button.closest('.invoice-service-item');
-  serviceItem.remove();
-  
-  // Renumber remaining services
-  const container = document.getElementById('invoiceServicesContainer');
-  const services = container.querySelectorAll('.invoice-service-item');
-  services.forEach((service, index) => {
-    const header = service.querySelector('h5');
-    header.textContent = `🛠️ Dienst ${index + 1}`;
-  });
-}
-
-function handleInvoiceSubmit(e) {
-  e.preventDefault();
-  
-  const services = [];
-  document.querySelectorAll('.invoice-service-item').forEach(item => {
-    const description = item.querySelector('.service-description').value;
-    const quantity = parseInt(item.querySelector('.service-quantity').value);
-    const unitPrice = parseFloat(item.querySelector('.service-price').value);
-    const vat = item.querySelector('.service-vat').value;
-    
-    if (description && quantity && unitPrice) {
-      services.push({
-        description: description,
-        quantity: quantity,
-        unitPrice: unitPrice,
-        vat: vat
-      });
-    }
-  });
-  
-  // Validation
-  if (services.length === 0) {
-    showError('❌ Voeg minimaal één dienst toe');
-    return;
-  }
-  
-  const invoiceData = {
-    invoiceNumber: document.getElementById('invoiceNumber').value,
-    invoiceDate: formatDateForInvoice(document.getElementById('invoiceDate').value),
-    clientCompany: document.getElementById('clientCompany').value,
-    contactPerson: document.getElementById('contactPerson').value,
-    address: document.getElementById('clientAddress').value,
-    postalCode: document.getElementById('clientPostalCode').value,
-    city: document.getElementById('clientCity').value,
-    country: 'België',
-    vatNumber: document.getElementById('clientVatNumber').value,
-    projectName: document.getElementById('invoiceProject').value,
-    projectPeriod: document.getElementById('invoiceProjectPeriod').value,
-    accountManager: document.getElementById('invoiceAccountManager').value,
-    services: services,
-    discount: 0
-  };
-  
-  // Validation
-  if (!invoiceData.clientCompany || !invoiceData.contactPerson || !invoiceData.projectName) {
-    showError('❌ Bedrijf, contactpersoon en projectnaam zijn verplicht');
-    return;
-  }
-  
-  // Save new client if not selected from autocomplete
-  if (!selectedClientData && invoiceData.clientCompany) {
-    saveNewClientFromInvoice();
-  }
-  
-  showInfo('📄 Factuur aanmaken...');
-  
-  google.script.run
-    .withSuccessHandler(handleInvoiceSuccess)
-    .withFailureHandler(handleError)
-    .createInvoice(invoiceData);
-}
-
-function handleInvoiceSuccess(result) {
-  if (result.success) {
-    let message = `✅ Factuur ${result.invoiceNumber} succesvol aangemaakt!`;
-    
-    if (result.pdfResult && result.pdfResult.success) {
-      message += `<br>📄 <a href="${result.pdfResult.downloadUrl}" target="_blank">Download PDF factuur</a>`;
-      
-      // Show PDF download section
-      document.getElementById('invoicePdfSection').style.display = 'block';
-      document.getElementById('invoicePdfLink').href = result.pdfResult.downloadUrl;
-      document.getElementById('invoicePdfLink').textContent = `📄 Download ${result.pdfResult.fileName}`;
-    }
-    
-    showSuccess(message);
-    closeInvoiceModal();
-    loadInvoices();
-    loadDashboard();
-  } else {
-    showError('❌ Factuur aanmaken mislukt: ' + result.error);
-  }
-}
-
 function loadInvoices() {
   google.script.run
     .withSuccessHandler(updateInvoicesTable)
@@ -1188,7 +1086,7 @@ function formatDateForInvoice(dateString) {
   return dateString;
 }
 
-// ==================== EXPENSES MANAGEMENT (GEFIXED) ====================
+// ==================== EXPENSES MANAGEMENT ====================
 function handleExpenseSubmit(e) {
   e.preventDefault();
   
@@ -1210,7 +1108,7 @@ function handleExpenseSubmit(e) {
     return;
   }
   
-  if (!formData.expenseNumber) {
+  if (!formData.expenseNumber || formData.expenseNumber.trim() === '') {
     generateExpenseNumberForForm();
     return;
   }
@@ -1326,10 +1224,18 @@ function handleExpenseError(error) {
   showError('❌ Fout bij opslaan: ' + error.message);
 }
 
-function resetSubmitButton() {
-  const submitBtn = document.getElementById('saveExpenseBtn');
-  submitBtn.disabled = false;
-  submitBtn.textContent = '✅ Uitgave Opslaan';
+function resetSubmitButton(button, originalText) {
+  if (button) {
+    button.disabled = false;
+    button.textContent = originalText;
+  } else {
+    // Reset expense submit button if no button provided
+    const submitBtn = document.getElementById('saveExpenseBtn');
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '✅ Uitgave Opslaan';
+    }
+  }
 }
 
 function resetExpenseForm() {
@@ -1340,15 +1246,20 @@ function resetExpenseForm() {
   generateExpenseNumberForForm();
 }
 
+// BUG FIX 4: Generate expense number from Airtable
 function generateExpenseNumberForForm() {
+  showInfo('📝 Uitgavenummer ophalen van Airtable...');
+  
   google.script.run
     .withSuccessHandler(function(expenseNumber) {
       document.getElementById('expenseNumber').value = expenseNumber;
+      showSuccess('✅ Uitgavenummer: ' + expenseNumber);
     })
     .withFailureHandler(function(error) {
       console.error('Failed to generate expense number:', error);
       const fallbackNumber = `UIT-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`;
       document.getElementById('expenseNumber').value = fallbackNumber;
+      showWarning('⚠️ Kon geen nummer van Airtable krijgen, tijdelijk nummer gebruikt');
     })
     .generateExpenseNumber();
 }
@@ -1390,7 +1301,7 @@ function updateExpensesTable(result) {
     const fields = expense.fields;
     const row = document.createElement('tr');
     
-    // Check for attachment with FIXED field names
+    // Check for attachment
     let attachmentHtml = '<span class="no-attachment">Geen bijlage</span>';
     if (fields['Bijlage URL']) {
       const fileName = fields['Bijlage Bestandsnaam'] || 'Bijlage';
@@ -1419,7 +1330,7 @@ function updateExpensesTable(result) {
   });
 }
 
-// ==================== BUG FIX 4: REPORTS (GEFIXED) ====================
+// ==================== REPORTS ====================
 function generateReport() {
   const config = {
     transactionType: document.getElementById('reportType').value,
@@ -1599,20 +1510,42 @@ function showInfo(message) {
   showAlert('infoAlert', message);
 }
 
+function showWarning(message) {
+  showAlert('warningAlert', message);
+}
+
 function showAlert(alertId, message) {
   hideAlerts();
-  const alert = document.getElementById(alertId);
-  alert.innerHTML = message;
-  alert.classList.add('show');
   
-  setTimeout(() => {
-    alert.classList.remove('show');
-  }, 5000);
+  // Map to correct alert types
+  const alertMap = {
+    'warningAlert': 'infoAlert',
+    'successAlert': 'successAlert',
+    'errorAlert': 'errorAlert',
+    'infoAlert': 'infoAlert'
+  };
+  
+  const mappedId = alertMap[alertId] || 'infoAlert';
+  const alert = document.getElementById(mappedId);
+  
+  if (alert) {
+    alert.innerHTML = message;
+    alert.classList.add('show');
+    
+    // Auto-dismiss after longer time for important messages
+    const dismissTime = message.length > 100 ? 12000 : 8000;
+    setTimeout(() => {
+      alert.classList.remove('show');
+    }, dismissTime);
+  }
 }
 
 function hideAlerts() {
   ['successAlert', 'errorAlert', 'infoAlert'].forEach(id => {
-    document.getElementById(id).classList.remove('show');
+    const alert = document.getElementById(id);
+    if (alert) {
+      alert.classList.remove('show');
+    }
   });
 }
 
@@ -1631,6 +1564,10 @@ function refreshData() {
 
 // Initialize expense number on page load
 document.addEventListener('DOMContentLoaded', function() {
-  generateExpenseNumberForForm();
+  // Only generate if on expenses page
+  const expensesSection = document.getElementById('expenses');
+  if (expensesSection && expensesSection.classList.contains('active')) {
+    generateExpenseNumberForForm();
+  }
 });
 </script>
