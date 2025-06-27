@@ -845,18 +845,23 @@ function getCultureNACECodes() {
 }
 
 // ==================== BUG FIX 2 & 3: INVOICE CREATION WITH PDF ====================
+// ==================== BUG FIX 3: ENHANCED RESPONSE WITH DOWNLOAD CAPABILITY ====================
+/**
+ * Enhanced createInvoice function that returns PDF info for immediate display
+ */
 function createInvoice(invoiceData) {
   try {
-    // Allow manual invoice number override
+    // Validate and generate invoice number if needed
     if (!invoiceData.invoiceNumber || invoiceData.invoiceNumber.trim() === '') {
       invoiceData.invoiceNumber = generateInvoiceNumber();
     }
     
-    // Validate invoice number format
+    // Validate format
     if (!invoiceData.invoiceNumber.match(/^\d{4}-\d{3}$/)) {
       throw new Error('VALIDATION_ERROR: Factuurnummer moet formaat YYYY-XXX hebben');
     }
     
+    // Calculate totals
     let subtotal = 0;
     let totalVAT = 0;
     
@@ -864,14 +869,15 @@ function createInvoice(invoiceData) {
       const lineTotal = service.quantity * service.unitPrice;
       subtotal += lineTotal;
       
-      if (service.vat !== 'Vrijgesteld' && service.vat !== '0') {
-        const vatRate = parseFloat(service.vat.toString().replace('%', '')) / 100;
+      if (service.vat && service.vat !== '0' && service.vat !== 'Vrijgesteld') {
+        const vatRate = parseFloat(service.vat) / 100;
         totalVAT += lineTotal * vatRate;
       }
     });
     
-    const total = subtotal + totalVAT + (invoiceData.discount || 0);
+    const total = subtotal + totalVAT - (invoiceData.discount || 0);
     
+    // Create transaction record
     const transactionRecord = {
       Name: invoiceData.invoiceNumber,
       Date: invoiceData.invoiceDate.split('/').reverse().join('-'),
@@ -884,6 +890,7 @@ function createInvoice(invoiceData) {
       Status: 'Verzonden (verzonden facturen)'
     };
     
+    // Save to Airtable
     const airtable = new AirtableService();
     const transactionResult = airtable.createRecord('Transacties', transactionRecord, { typecast: true });
     
@@ -891,319 +898,492 @@ function createInvoice(invoiceData) {
       return transactionResult;
     }
     
-    // Generate PDF
+    // Generate PDF with enhanced function
     const pdfResult = generateInvoicePDF(invoiceData);
+    
+    // Store recent invoice info in script properties for quick access
+    if (pdfResult.success) {
+      const scriptProperties = PropertiesService.getScriptProperties();
+      const recentInvoices = JSON.parse(scriptProperties.getProperty('recentInvoices') || '[]');
+      
+      // Add new invoice to beginning
+      recentInvoices.unshift({
+        invoiceNumber: invoiceData.invoiceNumber,
+        clientCompany: invoiceData.clientCompany,
+        fileName: pdfResult.fileName,
+        fileId: pdfResult.fileId,
+        downloadUrl: pdfResult.directDownloadUrl,
+        viewUrl: pdfResult.webViewUrl,
+        createdAt: pdfResult.createdAt
+      });
+      
+      // Keep only last 10 invoices
+      if (recentInvoices.length > 10) {
+        recentInvoices.pop();
+      }
+      
+      scriptProperties.setProperty('recentInvoices', JSON.stringify(recentInvoices));
+    }
     
     return {
       success: true,
-      message: 'Invoice created successfully',
+      message: 'Factuur succesvol aangemaakt',
       invoiceNumber: invoiceData.invoiceNumber,
+      transactionId: transactionResult.record.id,
       pdfResult: pdfResult
     };
     
   } catch (error) {
-    return ErrorHandler.handle(error, { function: 'createInvoice' });
+    console.error('Invoice creation error:', error);
+    return {
+      success: false,
+      error: error.message || 'Factuur aanmaken mislukt'
+    };
+  }
+}
+
+/**
+ * Get recent invoices for display in UI
+ */
+function getRecentInvoices() {
+  try {
+    const scriptProperties = PropertiesService.getScriptProperties();
+    const recentInvoices = JSON.parse(scriptProperties.getProperty('recentInvoices') || '[]');
+    
+    return {
+      success: true,
+      invoices: recentInvoices
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+      invoices: []
+    };
   }
 }
 
 /**
  * ENHANCED PDF GENERATION WITH ROBUST ERROR HANDLING
  */
+* Generate invoice PDF with EXACT template matching and proper error handling
+ */
 function generateInvoicePDF(invoiceData) {
   let tempDoc = null;
   
   try {
-    console.log('=== STARTING INVOICE PDF GENERATION ===');
+    console.log('=== STARTING ENHANCED INVOICE PDF GENERATION ===');
     console.log('Invoice number:', invoiceData.invoiceNumber);
     
-    // Validate inputs
-    if (!invoiceData || !invoiceData.invoiceNumber) {
-      throw new Error('Invalid invoice data provided');
-    }
-    
-    // Test Drive folder access
+    // Create or get invoice folder with better error handling
     let targetFolder;
     try {
+      // First try the configured folder
       targetFolder = DriveApp.getFolderById(DRIVE_FOLDERS.INVOICES);
-      console.log('✅ Drive folder access verified:', targetFolder.getName());
-    } catch (folderError) {
-      console.error('❌ Drive folder access failed:', folderError);
-      
-      // Create folder if needed
-      try {
-        const folders = DriveApp.getFoldersByName('Facturen');
-        if (folders.hasNext()) {
-          targetFolder = folders.next();
-          console.log('✅ Using existing Facturen folder');
-        } else {
-          targetFolder = DriveApp.createFolder('Facturen');
-          console.log('✅ Created new Facturen folder');
-        }
-      } catch (createError) {
-        throw new Error('Cannot access or create invoice folder: ' + createError.message);
+      console.log('✅ Using configured invoice folder');
+    } catch (e) {
+      console.log('⚠️ Configured folder not accessible, creating/finding alternative');
+      // Try to find existing folder
+      const folders = DriveApp.getFoldersByName('Facturen_MORE_IS_MORE');
+      if (folders.hasNext()) {
+        targetFolder = folders.next();
+      } else {
+        // Create new folder in root
+        targetFolder = DriveApp.createFolder('Facturen_MORE_IS_MORE');
+        // Make it accessible
+        targetFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
       }
+      console.log('✅ Using alternative folder:', targetFolder.getName());
     }
     
-    // Calculate totals
+    // Calculate totals first
     let subtotal = 0;
-    let totalVAT = 0;
-    const processedServices = [];
+    let totalVATAmount = 0;
+    const serviceLines = [];
     
     invoiceData.services.forEach(service => {
       const lineAmount = service.quantity * service.unitPrice;
       let lineVAT = 0;
+      let vatText = '0%';
       
-      if (service.vat !== '0' && service.vat !== 'Vrijgesteld') {
-        const vatRate = parseFloat(service.vat.toString().replace('%', '')) / 100;
+      if (service.vat && service.vat !== '0' && service.vat !== 'Vrijgesteld') {
+        const vatRate = parseFloat(service.vat) / 100;
         lineVAT = lineAmount * vatRate;
+        vatText = service.vat + '%';
       }
       
-      processedServices.push({
+      serviceLines.push({
         description: service.description,
         quantity: service.quantity,
         unitPrice: service.unitPrice,
-        vat: service.vat === '0' || service.vat === 'Vrijgesteld' ? 'Vrijgesteld' : service.vat + '%',
-        total: lineAmount + lineVAT
+        vatText: vatText,
+        amount: lineAmount
       });
       
       subtotal += lineAmount;
-      totalVAT += lineVAT;
+      totalVATAmount += lineVAT;
     });
     
-    const grandTotal = subtotal + totalVAT + (invoiceData.discount || 0);
+    const grandTotal = subtotal + totalVATAmount - (invoiceData.discount || 0);
     
-    // Create document
+    // Create document with unique name
     const timestamp = Date.now();
-    const tempDocName = `Invoice_${invoiceData.invoiceNumber}_${timestamp}`;
-    
-    console.log('Creating document:', tempDocName);
-    tempDoc = DocumentApp.create(tempDocName);
-    
-    if (!tempDoc) {
-      throw new Error('Failed to create Google Document');
-    }
-    
+    const docName = `Factuur_${invoiceData.invoiceNumber}_TEMP_${timestamp}`;
+    tempDoc = DocumentApp.create(docName);
     const body = tempDoc.getBody();
+    
+    // Clear default content
     body.clear();
     
-    // Build document matching template
+    // Set document margins (narrower for invoice)
+    body.setMarginTop(40);
+    body.setMarginBottom(40);
+    body.setMarginLeft(50);
+    body.setMarginRight(50);
     
-    // Company header
+    // Define the blue color
+    const primaryBlue = '#1e40af';
+    const darkGray = '#1e293b';
+    const mediumGray = '#64748b';
+    
+    // ===== HEADER SECTION =====
+    // MORE IS MORE! - Large blue
     const header1 = body.appendParagraph('MORE IS MORE!');
-    header1.setFontSize(24);
+    header1.setFontSize(36);
     header1.setBold(true);
+    header1.setForegroundColor(primaryBlue);
     header1.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    header1.setSpacingAfter(0);
     
+    // Agency - Smaller
     const header2 = body.appendParagraph('Agency');
-    header2.setFontSize(20);
+    header2.setFontSize(24);
+    header2.setForegroundColor(darkGray);
     header2.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
-    header2.setSpacingAfter(10);
+    header2.setSpacingAfter(15);
     
+    // FACTUUR - Medium blue
     const invoiceTitle = body.appendParagraph('FACTUUR');
-    invoiceTitle.setFontSize(16);
+    invoiceTitle.setFontSize(18);
     invoiceTitle.setBold(true);
+    invoiceTitle.setForegroundColor(primaryBlue);
     invoiceTitle.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
-    invoiceTitle.setSpacingAfter(20);
+    invoiceTitle.setSpacingAfter(25);
     
-    // Company info
-    body.appendParagraph(
+    // ===== COMPANY INFO AND INVOICE DETAILS (TWO COLUMNS) =====
+    const infoTable = body.appendTable();
+    infoTable.setBorderWidth(0);
+    const infoRow = infoTable.appendTableRow();
+    
+    // Left column - Company info
+    const leftCell = infoRow.appendTableCell();
+    const companyInfo = leftCell.appendParagraph(
       `${COMPANY_INFO.address}\n` +
       `${COMPANY_INFO.postalCode} ${COMPANY_INFO.city}, ${COMPANY_INFO.country}\n` +
       `Tel: ${COMPANY_INFO.phone}\n` +
       `E-mail: ${COMPANY_INFO.email}\n` +
       `Ondernemingsnummer: ${COMPANY_INFO.vatNumber.replace('BE ', '')}`
-    ).setFontSize(10);
+    );
+    companyInfo.setFontSize(10);
+    companyInfo.setForegroundColor(darkGray);
+    leftCell.setPaddingTop(0);
+    leftCell.setPaddingBottom(0);
+    leftCell.setPaddingLeft(0);
+    leftCell.setPaddingRight(20);
     
-    // Invoice details (right aligned)
-    const details = body.appendParagraph(
+    // Right column - Invoice details
+    const rightCell = infoRow.appendTableCell();
+    const invoiceDetails = rightCell.appendParagraph(
       `Factuurnr: ${invoiceData.invoiceNumber}\n` +
       `Factuurdatum: ${invoiceData.invoiceDate}\n` +
       `Vervaldatum: ${calculateDueDate(invoiceData.invoiceDate)}\n` +
-      `Referentie: ${invoiceData.projectName}`
+      `Referentie: ${invoiceData.projectName || 'Geen referentie'}`
     );
-    details.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
-    details.setSpacingAfter(20);
-    
-    // FACTUURADRES section
-    const addressHeader = body.appendParagraph('FACTUURADRES');
-    addressHeader.setBold(true);
-    addressHeader.setFontSize(12);
-    addressHeader.setSpacingAfter(10);
-    
-    body.appendParagraph(
-      `${invoiceData.clientCompany}\n` +
-      `${invoiceData.contactPerson}\n` +
-      `${invoiceData.address}\n` +
-      `${invoiceData.postalCode || ''} ${invoiceData.city}\n` +
-      `${invoiceData.country || 'België'}\n` +
-      `BTW: ${invoiceData.vatNumber || 'n.v.t.'}`
-    ).setSpacingAfter(20);
-    
-    // PROJECT DETAILS section
-    const projectHeader = body.appendParagraph('PROJECT DETAILS');
-    projectHeader.setBold(true);
-    projectHeader.setFontSize(12);
-    projectHeader.setSpacingAfter(10);
-    
-    body.appendParagraph(
-      `Project: ${invoiceData.projectName}\n` +
-      `Periode: ${invoiceData.projectPeriod || 'n.v.t.'}\n` +
-      `Account manager: ${invoiceData.accountManager || 'More is More! Agency'}`
-    ).setSpacingAfter(20);
-    
-    // GELEVERDE DIENSTEN section
-    const servicesHeader = body.appendParagraph('GELEVERDE DIENSTEN');
-    servicesHeader.setBold(true);
-    servicesHeader.setFontSize(12);
-    servicesHeader.setSpacingAfter(10);
-    
-    // Services table
-    const table = body.appendTable();
-    
-    // Header row
-    const headerRow = table.appendTableRow();
-    ['Omschrijving', 'Aantal', 'Eenheidsprijs', 'BTW', 'Bedrag'].forEach(text => {
-      const cell = headerRow.appendTableCell(text);
-      cell.setBold(true);
-      cell.setBackgroundColor('#f0f0f0');
-    });
-    
-    // Service rows
-    processedServices.forEach(service => {
-      const row = table.appendTableRow();
-      row.appendTableCell(service.description);
-      row.appendTableCell(service.quantity.toString()).setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
-      row.appendTableCell(`€${service.unitPrice.toFixed(2)}`).setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
-      row.appendTableCell(service.vat).setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
-      row.appendTableCell(`€${service.total.toFixed(2)}`).setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
-    });
+    invoiceDetails.setFontSize(10);
+    invoiceDetails.setForegroundColor(darkGray);
+    invoiceDetails.setBold(true);
+    invoiceDetails.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+    rightCell.setPaddingTop(0);
+    rightCell.setPaddingBottom(0);
+    rightCell.setPaddingLeft(20);
+    rightCell.setPaddingRight(0);
     
     body.appendParagraph('').setSpacingAfter(20);
     
-    // Totals
-    const totalsText = body.appendParagraph(
-      `Subtotaal €${subtotal.toFixed(2)}\n` +
-      `TOTAAL TE BETALEN €${grandTotal.toFixed(2)}`
-    );
-    totalsText.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
-    totalsText.setBold(true);
-    totalsText.setSpacingAfter(20);
+    // ===== FACTUURADRES SECTION =====
+    const addressHeader = body.appendParagraph('FACTUURADRES');
+    addressHeader.setFontSize(12);
+    addressHeader.setBold(true);
+    addressHeader.setForegroundColor(primaryBlue);
+    addressHeader.setSpacingAfter(10);
     
-    // Footer line
-    const footerLine = body.appendParagraph(
+    const clientAddress = body.appendParagraph(
+      `${invoiceData.contactPerson || ''}\n` +
+      `${invoiceData.clientCompany || ''}\n` +
+      `${invoiceData.address || ''}\n` +
+      `${invoiceData.postalCode || ''} ${invoiceData.city || ''}\n` +
+      `${invoiceData.country || 'België'}\n` +
+      `BTW: ${invoiceData.vatNumber || 'n.v.t.'}`
+    );
+    clientAddress.setFontSize(10);
+    clientAddress.setForegroundColor(darkGray);
+    clientAddress.setSpacingAfter(20);
+    
+    // ===== PROJECT DETAILS SECTION =====
+    const projectHeader = body.appendParagraph('PROJECT DETAILS');
+    projectHeader.setFontSize(12);
+    projectHeader.setBold(true);
+    projectHeader.setForegroundColor(primaryBlue);
+    projectHeader.setSpacingAfter(10);
+    
+    const projectDetails = body.appendParagraph(
+      `Project: ${invoiceData.projectName || 'Algemeen'}\n` +
+      `Periode: ${invoiceData.projectPeriod || 'n.v.t.'}\n` +
+      `Account manager: ${invoiceData.accountManager || 'More is More! Agency'}`
+    );
+    projectDetails.setFontSize(10);
+    projectDetails.setForegroundColor(darkGray);
+    projectDetails.setSpacingAfter(20);
+    
+    // ===== GELEVERDE DIENSTEN TABLE =====
+    const servicesHeader = body.appendParagraph('GELEVERDE DIENSTEN');
+    servicesHeader.setFontSize(12);
+    servicesHeader.setBold(true);
+    servicesHeader.setForegroundColor(primaryBlue);
+    servicesHeader.setSpacingAfter(10);
+    
+    // Services table with exact styling
+    const servicesTable = body.appendTable();
+    servicesTable.setBorderColor('#e5e7eb');
+    
+    // Table header
+    const tableHeader = servicesTable.appendTableRow();
+    const headers = ['Omschrijving', 'Aantal', 'Eenheidsprijs', 'BTW', 'Bedrag'];
+    headers.forEach(headerText => {
+      const cell = tableHeader.appendTableCell(headerText);
+      cell.setBackgroundColor('#f8fafc');
+      cell.setPaddingTop(8);
+      cell.setPaddingBottom(8);
+      cell.setPaddingLeft(10);
+      cell.setPaddingRight(10);
+      
+      const para = cell.getChild(0).asParagraph();
+      para.setBold(true);
+      para.setFontSize(10);
+      para.setForegroundColor(darkGray);
+    });
+    
+    // Service rows
+    serviceLines.forEach(line => {
+      const row = servicesTable.appendTableRow();
+      
+      // Description
+      const descCell = row.appendTableCell(line.description);
+      const descPara = descCell.getChild(0).asParagraph();
+      descPara.setFontSize(10);
+      descPara.setForegroundColor(darkGray);
+      descCell.setPaddingTop(6);
+      descCell.setPaddingBottom(6);
+      descCell.setPaddingLeft(10);
+      
+      // Quantity
+      const qtyCell = row.appendTableCell(line.quantity.toString());
+      const qtyPara = qtyCell.getChild(0).asParagraph();
+      qtyPara.setFontSize(10);
+      qtyPara.setForegroundColor(darkGray);
+      qtyPara.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+      qtyCell.setPaddingTop(6);
+      qtyCell.setPaddingBottom(6);
+      
+      // Unit price
+      const priceCell = row.appendTableCell(formatCurrency(line.unitPrice));
+      const pricePara = priceCell.getChild(0).asParagraph();
+      pricePara.setFontSize(10);
+      pricePara.setForegroundColor(darkGray);
+      pricePara.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+      priceCell.setPaddingTop(6);
+      priceCell.setPaddingBottom(6);
+      priceCell.setPaddingRight(10);
+      
+      // VAT
+      const vatCell = row.appendTableCell(line.vatText);
+      const vatPara = vatCell.getChild(0).asParagraph();
+      vatPara.setFontSize(10);
+      vatPara.setForegroundColor(darkGray);
+      vatPara.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+      vatCell.setPaddingTop(6);
+      vatCell.setPaddingBottom(6);
+      
+      // Amount
+      const amountCell = row.appendTableCell(formatCurrency(line.amount));
+      const amountPara = amountCell.getChild(0).asParagraph();
+      amountPara.setFontSize(10);
+      amountPara.setForegroundColor(darkGray);
+      amountPara.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+      amountCell.setPaddingTop(6);
+      amountCell.setPaddingBottom(6);
+      amountCell.setPaddingRight(10);
+    });
+    
+    body.appendParagraph('').setSpacingAfter(15);
+    
+    // ===== TOTALS SECTION =====
+    // Subtotal
+    const subtotalPara = body.appendParagraph(`Subtotaal ${formatCurrency(subtotal)}`);
+    subtotalPara.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+    subtotalPara.setFontSize(11);
+    subtotalPara.setForegroundColor(darkGray);
+    subtotalPara.setSpacingAfter(5);
+    
+    // Korting if applicable
+    if (invoiceData.discount && invoiceData.discount !== 0) {
+      const discountPara = body.appendParagraph(`Korting/toeslag ${formatCurrency(-invoiceData.discount)}`);
+      discountPara.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+      discountPara.setFontSize(11);
+      discountPara.setForegroundColor(darkGray);
+      discountPara.setSpacingAfter(5);
+    }
+    
+    // Total
+    const totalPara = body.appendParagraph(`TOTAAL TE BETALEN ${formatCurrency(grandTotal)}`);
+    totalPara.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+    totalPara.setFontSize(14);
+    totalPara.setBold(true);
+    totalPara.setForegroundColor(primaryBlue);
+    totalPara.setSpacingAfter(30);
+    
+    // ===== FOOTER WITH COMPANY INFO =====
+    const footerLine1 = body.appendParagraph(
       `MORE IS MORE! Agency VZW | ${COMPANY_INFO.address}, ${COMPANY_INFO.postalCode} ${COMPANY_INFO.city} | ${COMPANY_INFO.vatNumber} | RPR Brussel`
     );
-    footerLine.setFontSize(8);
-    footerLine.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
-    footerLine.setSpacingAfter(20);
+    footerLine1.setFontSize(8);
+    footerLine1.setForegroundColor(mediumGray);
+    footerLine1.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    footerLine1.setSpacingAfter(5);
     
-    // BETALINGSGEGEVENS
+    // Page break for second page
+    body.appendPageBreak();
+    
+    // ===== BETALINGSGEGEVENS (Second page) =====
     const paymentHeader = body.appendParagraph('BETALINGSGEGEVENS');
-    paymentHeader.setBold(true);
     paymentHeader.setFontSize(12);
+    paymentHeader.setBold(true);
+    paymentHeader.setForegroundColor(primaryBlue);
     paymentHeader.setSpacingAfter(10);
     
-    body.appendParagraph(
+    const paymentDetails = body.appendParagraph(
       `Bank: Triodos Bank\n` +
-      `Rekeninghouder: ${COMPANY_INFO.name}\n` +
+      `Rekeninghouder: MORE IS MORE! Agency\n` +
       `IBAN: ${COMPANY_INFO.iban}\n` +
       `BIC: ${COMPANY_INFO.bic}\n` +
       `Mededeling: ${invoiceData.invoiceNumber}\n` +
       `Vervaldatum: ${calculateDueDate(invoiceData.invoiceDate)}`
-    ).setFontSize(10).setSpacingAfter(20);
+    );
+    paymentDetails.setFontSize(10);
+    paymentDetails.setForegroundColor(darkGray);
+    paymentDetails.setSpacingAfter(25);
     
-    // ALGEMENE VOORWAARDEN
+    // ===== ALGEMENE VOORWAARDEN =====
     const termsHeader = body.appendParagraph('ALGEMENE VOORWAARDEN');
+    termsHeader.setFontSize(12);
     termsHeader.setBold(true);
-    termsHeader.setFontSize(11);
+    termsHeader.setForegroundColor(primaryBlue);
     termsHeader.setSpacingAfter(10);
     
-    body.appendParagraph(
+    const termsText = body.appendParagraph(
       '1. Deze factuur is betaalbaar binnen 30 dagen na factuurdatum.\n' +
       '2. Bij niet-betaling op de vervaldag is van rechtswege en zonder ingebrekestelling een intrest verschuldigd van 10% per jaar.\n' +
-      '3. Bovendien is bij gehele of gedeeltelijke niet-betaling van de schuld op de vervaldag van rechtswege en zonder ingebrekestelling een forfaitaire vergoeding verschuldigd van 10% op het factuurbedrag, met een minimum van € 75,00.\n' +
+      '3. Bovendien is bij gehele of gedeeltelijke niet-betaling van de schuld op de vervaldag van rechtswege en zonder ' +
+      'ingebrekestelling een forfaitaire vergoeding verschuldigd van 10% op het factuurbedrag, met een minimum van € 75,00.\n' +
       '4. Alle geschillen vallen onder de exclusieve bevoegdheid van de rechtbanken van Brussel.'
-    ).setFontSize(9).setSpacingAfter(20);
+    );
+    termsText.setFontSize(9);
+    termsText.setForegroundColor(darkGray);
+    termsText.setSpacingAfter(30);
     
     // Final footer
-    const finalFooter = body.appendParagraph(
+    const footerLine2 = body.appendParagraph(
       `MORE IS MORE! Agency VZW | ${COMPANY_INFO.address}, ${COMPANY_INFO.postalCode} ${COMPANY_INFO.city} | ${COMPANY_INFO.vatNumber} | RPR Brussel`
     );
-    finalFooter.setFontSize(8);
-    finalFooter.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    footerLine2.setFontSize(8);
+    footerLine2.setForegroundColor(mediumGray);
+    footerLine2.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
     
-    console.log('✅ Document content created');
-    
-    // Save and close
+    // Save document
     tempDoc.saveAndClose();
-    console.log('✅ Document saved and closed');
+    console.log('✅ Document saved successfully');
     
-    // Wait for document to be ready
-    Utilities.sleep(5000);
+    // Wait longer for processing
+    Utilities.sleep(3000);
     
-    // Convert to PDF
+    // Generate PDF with retry mechanism
     let pdfBlob;
-    try {
-      pdfBlob = tempDoc.getAs('application/pdf');
-      console.log('✅ PDF blob created, size:', pdfBlob.getBytes().length);
-    } catch (pdfError) {
-      console.error('❌ PDF conversion failed:', pdfError);
-      throw new Error('PDF conversion failed: ' + pdfError.message);
-    }
+    let retryCount = 0;
+    const maxRetries = 3;
     
-    // Save to Drive
-    const fileName = `Factuur_${invoiceData.invoiceNumber}.pdf`;
-    
-    try {
-      const file = targetFolder.createFile(pdfBlob);
-      file.setName(fileName);
-      
-      // Set sharing permissions
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      
-      console.log('✅ PDF saved successfully:', fileName);
-      
-      // Clean up temporary document
+    while (retryCount < maxRetries) {
       try {
-        DriveApp.getFileById(tempDoc.getId()).setTrashed(true);
-        console.log('✅ Temporary document cleaned up');
-      } catch (cleanupError) {
-        console.warn('⚠️ Could not clean up temp document:', cleanupError);
+        console.log(`PDF conversion attempt ${retryCount + 1}`);
+        pdfBlob = tempDoc.getAs('application/pdf');
+        console.log('✅ PDF generated successfully');
+        break;
+      } catch (pdfError) {
+        retryCount++;
+        if (retryCount >= maxRetries) {
+          throw new Error('PDF conversion failed after ' + maxRetries + ' attempts');
+        }
+        console.log(`⚠️ PDF conversion failed, retrying in 2 seconds...`);
+        Utilities.sleep(2000);
       }
-      
-      return {
-        success: true,
-        fileId: file.getId(),
-        fileName: fileName,
-        downloadUrl: `https://drive.google.com/file/d/${file.getId()}/view`,
-        directDownloadUrl: `https://drive.google.com/uc?export=download&id=${file.getId()}`,
-        folderId: targetFolder.getId(),
-        folderName: targetFolder.getName()
-      };
-      
-    } catch (saveError) {
-      console.error('❌ Failed to save PDF to Drive:', saveError);
-      throw new Error('Failed to save PDF to Drive: ' + saveError.message);
     }
+    
+    // Save PDF to Drive
+    const fileName = `Factuur_${invoiceData.invoiceNumber}_${invoiceData.clientCompany.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+    const file = targetFolder.createFile(pdfBlob);
+    file.setName(fileName);
+    
+    // Set sharing permissions
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    
+    // Clean up temp document
+    try {
+      DriveApp.getFileById(tempDoc.getId()).setTrashed(true);
+    } catch (e) {
+      console.warn('Could not delete temp document:', e);
+    }
+    
+    console.log('=== INVOICE PDF GENERATION COMPLETE ===');
+    
+    return {
+      success: true,
+      fileId: file.getId(),
+      fileName: fileName,
+      downloadUrl: file.getUrl(),
+      directDownloadUrl: `https://drive.google.com/uc?export=download&id=${file.getId()}`,
+      webViewUrl: `https://drive.google.com/file/d/${file.getId()}/view`,
+      embedUrl: `https://drive.google.com/file/d/${file.getId()}/preview`,
+      folderId: targetFolder.getId(),
+      folderName: targetFolder.getName(),
+      createdAt: new Date().toISOString()
+    };
     
   } catch (error) {
-    console.error('=== PDF GENERATION FAILED ===');
-    console.error('Error details:', error);
+    console.error('=== INVOICE PDF GENERATION ERROR ===');
+    console.error(error);
     
     // Clean up on error
     if (tempDoc) {
       try {
         DriveApp.getFileById(tempDoc.getId()).setTrashed(true);
-        console.log('✅ Cleaned up temp document after error');
-      } catch (cleanupError) {
-        console.warn('⚠️ Could not clean up temp document after error');
+      } catch (e) {
+        console.warn('Could not clean up temp doc');
       }
     }
     
     return {
       success: false,
-      error: error.message || 'Unknown PDF generation error',
-      details: error.toString()
+      error: error.message || 'Unknown error during PDF generation',
+      timestamp: new Date().toISOString()
     };
   }
 }
@@ -1286,31 +1466,80 @@ function createExpenseWithFile(expenseData, fileBlob, fileName) {
   }
 }
 
+/**
+ * Get or create quarterly folder for expenses
+ */
+function getOrCreateQuarterlyFolder(parentFolder) {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0-11
+  const quarter = Math.floor(month / 3) + 1; // 1-4
+  
+  const folderName = `${year}-Q${quarter}`;
+  
+  // Try to find existing quarterly folder
+  const folders = parentFolder.getFoldersByName(folderName);
+  
+  if (folders.hasNext()) {
+    console.log(`Using existing quarterly folder: ${folderName}`);
+    return folders.next();
+  } else {
+    console.log(`Creating new quarterly folder: ${folderName}`);
+    const newFolder = parentFolder.createFolder(folderName);
+    newFolder.setDescription(`Uitgaven voor ${year} kwartaal ${quarter}`);
+    return newFolder;
+  }
+}
+
+/**
+ * Updated expense file upload with quarterly organization
+ */
 function uploadExpenseFile(fileBlob, fileName, expenseData) {
   try {
     // Create systematic filename
     const timestamp = new Date().getTime();
     const sanitizedName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
-    const category = expenseData.category || 'General';
-    const systematicFileName = `EXP_${expenseData.expenseNumber}_${category}_${timestamp}_${sanitizedName}`;
+    const systematicFileName = `${expenseData.expenseNumber}_${expenseData.vendor.replace(/[^a-zA-Z0-9]/g, '_')}_${timestamp}_${sanitizedName}`;
     
-    // Get or create folder structure
-    const baseFolder = getOrCreateExpenseFolder();
-    const categoryFolder = getOrCreateCategoryFolder(baseFolder, category);
-    const monthFolder = getOrCreateMonthFolder(categoryFolder);
+    // Get base expense folder
+    let baseFolder;
+    try {
+      baseFolder = DriveApp.getFolderById(DRIVE_FOLDERS.EXPENSES);
+    } catch (e) {
+      console.log('Creating/finding expense folder');
+      const folders = DriveApp.getFoldersByName('Uitgaven_MORE_IS_MORE');
+      if (folders.hasNext()) {
+        baseFolder = folders.next();
+      } else {
+        baseFolder = DriveApp.createFolder('Uitgaven_MORE_IS_MORE');
+        baseFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      }
+    }
     
-    // Create file blob and upload
+    // Get or create quarterly folder (BUG FIX 2)
+    const quarterlyFolder = getOrCreateQuarterlyFolder(baseFolder);
+    
+    // Create file blob
     const blob = Utilities.newBlob(
       Utilities.base64Decode(fileBlob.data),
       fileBlob.mimeType,
       systematicFileName
     );
     
-    const uploadedFile = monthFolder.createFile(blob);
-    uploadedFile.setDescription(`Expense file uploaded on ${new Date().toISOString()} for expense ${expenseData.expenseNumber}`);
+    // Upload file
+    const uploadedFile = quarterlyFolder.createFile(blob);
+    uploadedFile.setDescription(
+      `Uitgave: ${expenseData.description}\n` +
+      `Leverancier: ${expenseData.vendor}\n` +
+      `Categorie: ${expenseData.category}\n` +
+      `Bedrag: €${expenseData.amount}\n` +
+      `Upload datum: ${new Date().toISOString()}`
+    );
     
-    // Set proper permissions
+    // Set permissions
     uploadedFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    
+    console.log(`✅ File uploaded to quarterly folder: ${quarterlyFolder.getName()}`);
     
     return {
       success: true,
@@ -1318,12 +1547,18 @@ function uploadExpenseFile(fileBlob, fileName, expenseData) {
       fileName: systematicFileName,
       fileUrl: uploadedFile.getUrl(),
       viewUrl: `https://drive.google.com/file/d/${uploadedFile.getId()}/view`,
-      downloadUrl: `https://drive.google.com/uc?export=download&id=${uploadedFile.getId()}`
+      downloadUrl: `https://drive.google.com/uc?export=download&id=${uploadedFile.getId()}`,
+      embedUrl: `https://drive.google.com/file/d/${uploadedFile.getId()}/preview`,
+      quarterlyFolder: quarterlyFolder.getName(),
+      uploadDate: new Date().toISOString()
     };
     
   } catch (error) {
-    console.error('File upload error:', error);
-    return ErrorHandler.handle(error, { function: 'uploadExpenseFile' });
+    console.error('Expense file upload error:', error);
+    return {
+      success: false,
+      error: error.message || 'File upload failed'
+    };
   }
 }
 
@@ -1824,4 +2059,17 @@ function formatCurrency(amount) {
 function formatDate(dateString) {
   if (!dateString) return '';
   return new Date(dateString).toLocaleDateString('nl-BE');
+}
+// ==================== BUG FIX 2: QUARTERLY EXPENSE ORGANIZATION ====================
+function getOrCreateQuarterlyFolder(parentFolder) {
+  // [Kopieer regels 423-442 uit eerste artifact]
+}
+
+// ==================== BUG FIX 3: NEW FUNCTIONS ====================
+function getRecentInvoices() {
+  // [Kopieer regels 634-647 uit eerste artifact]
+}
+
+function getRecentReports() {
+  // [Kopieer regels 724-737 uit eerste artifact]
 }
